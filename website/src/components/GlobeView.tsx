@@ -3,9 +3,18 @@ import Globe from "globe.gl";
 import { Box } from "@chakra-ui/react";
 import CountryDropdown from "./CountryDropdown";
 
-function GlobeView() {
+interface Props {
+  onSelectCountry: (lat: number, lng: number) => void;
+}
+
+function GlobeView({ onSelectCountry }: Props) {
   const globeContainerRef = useRef<HTMLDivElement>(null);
   const globeInstanceRef = useRef<any>(null);
+const onSelectCountryRef = useRef<(lat: number, lng: number) => void>(onSelectCountry);
+
+  useEffect(() => {
+    onSelectCountryRef.current = onSelectCountry;
+  }, [onSelectCountry]);
 
   useEffect(() => {
     if (!globeContainerRef.current) return;
@@ -13,19 +22,28 @@ function GlobeView() {
     const globe = Globe()(globeContainerRef.current);
 
     globe
-      .globeImageUrl(
-        "//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
-      )
-      .backgroundImageUrl(
-        "//unpkg.com/three-globe/example/img/night-sky.png"
-      )
-      .width(window.innerWidth)
-      .height(window.innerHeight)
+      .globeImageUrl("//unpkg.com/three-globe/example/img/earth-blue-marble.jpg")
+      .backgroundImageUrl("//unpkg.com/three-globe/example/img/night-sky.png")
+      .width(globeContainerRef.current.offsetWidth)
+      .height(globeContainerRef.current.offsetHeight)
       .pointOfView({ lat: 20, lng: 10, altitude: 2.5 });
 
     globeInstanceRef.current = globe;
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const currentPov = globeInstanceRef.current.pointOfView();
+      if (e.key === '+' || e.key === '=') {
+        globeInstanceRef.current.pointOfView({ ...currentPov, altitude: currentPov.altitude - 0.2 }, 300);
+      }
+      if (e.key === '-') {
+        globeInstanceRef.current.pointOfView({ ...currentPov, altitude: currentPov.altitude + 0.2 }, 300);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
     return () => {
+      window.removeEventListener('keydown', handleKeyDown);
       if (globeContainerRef.current) {
         globeContainerRef.current.replaceChildren();
       }
@@ -34,10 +52,10 @@ function GlobeView() {
 
   const handleSelectCountry = (lat: number, lng: number) => {
     if (globeInstanceRef.current) {
-      globeInstanceRef.current.pointOfView(
-        { lat, lng, altitude: 0.8 },
-        2000
-      );
+      globeInstanceRef.current.pointOfView({ lat, lng, altitude: 0.8 }, 2000);
+      setTimeout(() => {
+        onSelectCountry(lat, lng);
+      }, 2000);
     }
   };
 
