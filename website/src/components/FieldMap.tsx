@@ -1,5 +1,5 @@
 import "leaflet/dist/leaflet.css";
-import { MapContainer, TileLayer, Polygon, Polyline, CircleMarker, useMapEvents, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Polygon, Polyline, Rectangle, CircleMarker, useMapEvents, useMap } from "react-leaflet";
 import { useState, useEffect, useRef } from "react";
 
 interface Props {
@@ -13,6 +13,8 @@ interface Field {
   points: any[];
   area: number;
   et: number;
+  eto: number | null;
+  grid: number[][] | null;
   visible: boolean;
 }
 
@@ -142,6 +144,47 @@ function DrawPolygon({ onComplete, onPointAdded }: { onComplete: (points: any[])
   );
 }
 
+function GridOverlay({ field }: { field: Field }) {
+  if (!field.grid || field.grid.length === 0) return null;
+
+  const lats = field.points.map((p: any) => p.lat);
+  const lngs = field.points.map((p: any) => p.lng);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+
+  const rows = field.grid.length;
+  const cols = field.grid[0].length;
+
+  const cells: JSX.Element[] = [];
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const value = field.grid[r][c];
+      const cellLat = maxLat - (r / rows) * (maxLat - minLat);
+      const cellLng = minLng + (c / cols) * (maxLng - minLng);
+      const nextLat = maxLat - ((r + 1) / rows) * (maxLat - minLat);
+      const nextLng = minLng + ((c + 1) / cols) * (maxLng - minLng);
+
+      cells.push(
+        <Rectangle
+          key={`${r}-${c}`}
+          bounds={[[cellLat, cellLng], [nextLat, nextLng]]}
+          pathOptions={{
+            color: "transparent",
+            fillColor: getColor(value),
+            fillOpacity: 0.65,
+            weight: 0,
+          }}
+        />
+      );
+    }
+  }
+
+  return <>{cells}</>;
+}
+
 function FieldMap({ lat, lng, onBack }: Props) {
   const [selectMode, setSelectMode] = useState(false);
   const [message, setMessage] = useState("");
@@ -150,6 +193,7 @@ function FieldMap({ lat, lng, onBack }: Props) {
   const [showTools, setShowTools] = useState(false);
   const [mapCenter, setMapCenter] = useState<[number, number]>([lat, lng]);
   const [flyToPoints, setFlyToPoints] = useState<any[]>([]);
+  const [isCalculating, setIsCalculating] = useState(false);
   const [plants] = useState<string[]>([
     "Wheat", "Corn", "Sunflower", "Barley",
     "Soybean", "Potato", "Tomato", "Grape",
@@ -160,12 +204,11 @@ function FieldMap({ lat, lng, onBack }: Props) {
 
   const showMessage = (msg: string) => {
     setMessage(msg);
-    setTimeout(() => setMessage(""), 2000);
+    setTimeout(() => setMessage(""), 3000);
   };
 
   const handleComplete = (points: any[]) => {
     const area = calculateArea(points);
-    const et = Math.round(Math.random() * 15 * 10) / 10;
     setFlyToPoints(points);
     setSelectMode(false);
 
@@ -173,26 +216,55 @@ function FieldMap({ lat, lng, onBack }: Props) {
       name: null,
       points,
       area,
-      et,
+      et: 0,
+      eto: null,
+      grid: null,
       visible: true,
     };
 
     const newFields = [...savedFields, newField];
     setSavedFields(newFields);
     setActiveFieldIndex(newFields.length - 1);
-    showMessage("Field analyzed");
+    showMessage("Field selected — choose a plant and click Calculate");
   };
 
-  const handleSendData = () => {
+  const handleCalculate = async () => {
     if (selectedPlantIndex === null) {
       showMessage("Please select a plant first");
       return;
     }
-    console.log("Sending data:", {
-      coordinates: activeField?.points.map(p => ({ lat: p.lat, lng: p.lng })),
-      plantIndex: selectedPlantIndex,
-    });
-    showMessage("Data sent");
+    if (activeFieldIndex === null || !activeField) return;
+
+    setIsCalculating(true);
+    showMessage("Calculating...");
+
+    try {
+      const response = await fetch("http://localhost:5000/api/calculate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          coordinates: activeField.points.map((p: any) => ({ lat: p.lat, lng: p.lng })),
+          crop_index: selectedPlantIndex,
+        }),
+      });
+
+      const data = await response.json();
+      const { ETo, irrigation_avg, irrigation_grid } = data.results;
+
+      const updated = [...savedFields];
+      updated[activeFieldIndex] = {
+        ...updated[activeFieldIndex],
+        et: irrigation_avg,
+        eto: ETo,
+        grid: irrigation_grid,
+      };
+      setSavedFields(updated);
+      showMessage("Calculation complete!");
+    } catch (e) {
+      showMessage("Error connecting to server");
+    } finally {
+      setIsCalculating(false);
+    }
   };
 
   const handleNewSelection = () => {
@@ -268,6 +340,8 @@ function FieldMap({ lat, lng, onBack }: Props) {
             onPointAdded={() => showMessage("Point added")}
           />
         )}
+
+        {/* Field polygons */}
         {savedFields.map((field, index) =>
           field.visible ? (
             <Polygon
@@ -275,10 +349,17 @@ function FieldMap({ lat, lng, onBack }: Props) {
               positions={field.points}
               color={getColor(field.et)}
               fillColor={getColor(field.et)}
-              fillOpacity={0.4}
+              fillOpacity={field.grid ? 0 : 0.4}
               weight={2}
               eventHandlers={{ click: () => handleLoadField(index) }}
             />
+          ) : null
+        )}
+
+        {/* Grid overlays */}
+        {savedFields.map((field, index) =>
+          field.visible && field.grid ? (
+            <GridOverlay key={`grid-${index}`} field={field} />
           ) : null
         )}
       </MapContainer>
@@ -325,8 +406,14 @@ function FieldMap({ lat, lng, onBack }: Props) {
         </div>
       )}
 
-      {/* Tools dropdown - top right — always visible */}
-      <div style={{ position: "fixed", top: 12, right: 12, zIndex: 1000 }}>
+      {/* Tools dropdown - shifts left when details card is open */}
+      <div style={{
+        position: "fixed",
+        top: 12,
+        right: activeField ? "252px" : "12px",
+        zIndex: 1000,
+        transition: "right 0.2s ease",
+      }}>
         <button
           style={{
             padding: "6px 14px", fontSize: "12px", fontWeight: 500,
@@ -393,7 +480,8 @@ function FieldMap({ lat, lng, onBack }: Props) {
                     </span>
                     <div style={{
                       width: 8, height: 8, borderRadius: "50%",
-                      background: getColor(field.et), flexShrink: 0,
+                      background: field.et > 0 ? getColor(field.et) : "rgba(255,255,255,0.3)",
+                      flexShrink: 0,
                     }} />
                   </div>
                 ))}
@@ -424,22 +512,37 @@ function FieldMap({ lat, lng, onBack }: Props) {
           </div>
 
           <div style={{ marginBottom: 8 }}>
-            <span style={{ opacity: 0.6, fontSize: "11px" }}>EVAPOTRANSPIRATION</span>
-            <p style={{ fontWeight: 500 }}>{activeField.et} L/m²/day</p>
+            <span style={{ opacity: 0.6, fontSize: "11px" }}>REFERENCE ET₀</span>
+            <p style={{ fontWeight: 500 }}>
+              {activeField.eto !== null ? `${activeField.eto} mm/day` : "—"}
+            </p>
+          </div>
+
+          <div style={{ marginBottom: 8 }}>
+            <span style={{ opacity: 0.6, fontSize: "11px" }}>IRRIGATION NEEDED</span>
+            <p style={{ fontWeight: 500 }}>
+              {activeField.et > 0 ? `${activeField.et} L/m²/day` : "—"}
+            </p>
           </div>
 
           <div style={{ marginBottom: 16 }}>
             <span style={{ opacity: 0.6, fontSize: "11px" }}>TOTAL WATER NEEDED</span>
-            <p style={{ fontWeight: 500 }}>{Math.round(activeField.et * activeField.area).toLocaleString()} L/day</p>
+            <p style={{ fontWeight: 500 }}>
+              {activeField.et > 0
+                ? `${Math.round(activeField.et * activeField.area).toLocaleString()} L/day`
+                : "—"}
+            </p>
           </div>
 
-          <div style={{
-            padding: "8px 12px", borderRadius: "6px",
-            background: getColor(activeField.et), color: "white",
-            fontSize: "11px", fontWeight: 600, textAlign: "center", marginBottom: 16,
-          }}>
-            {getLabel(activeField.et)}
-          </div>
+          {activeField.et > 0 && (
+            <div style={{
+              padding: "8px 12px", borderRadius: "6px",
+              background: getColor(activeField.et), color: "white",
+              fontSize: "11px", fontWeight: 600, textAlign: "center", marginBottom: 16,
+            }}>
+              {getLabel(activeField.et)}
+            </div>
+          )}
 
           <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 12, marginBottom: 16 }}>
             <p style={{ opacity: 0.6, fontSize: "11px", marginBottom: 8 }}>LEGEND</p>
@@ -480,8 +583,18 @@ function FieldMap({ lat, lng, onBack }: Props) {
             </select>
           </div>
 
-          <button onClick={handleSendData} style={{ ...btnStyle, background: "rgba(255,255,255,0.1)", color: "white" }}>
-            Send Data
+          <button
+            onClick={handleCalculate}
+            disabled={isCalculating}
+            style={{
+              ...btnStyle,
+              background: isCalculating ? "rgba(255,255,255,0.05)" : "rgba(80,160,80,0.3)",
+              color: isCalculating ? "rgba(255,255,255,0.4)" : "white",
+              border: "1px solid rgba(80,200,80,0.3)",
+              cursor: isCalculating ? "not-allowed" : "pointer",
+            }}
+          >
+            {isCalculating ? "Calculating..." : "Calculate"}
           </button>
 
           <button onClick={handleRenameField} style={btnStyle}>
