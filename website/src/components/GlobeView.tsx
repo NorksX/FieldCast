@@ -45,7 +45,6 @@ function GlobeView({ onSelectCountry }: Props) {
       }
     };
 
-    // ✅ FIX: handle resize
     const handleResize = () => {
       if (!globeContainerRef.current || !globeInstanceRef.current) return;
 

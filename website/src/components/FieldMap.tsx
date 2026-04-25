@@ -32,6 +32,7 @@ const countries = [
 ];
 
 function getColor(value: number): string {
+  if (value ===0) return "rgba(255,255,255,0.3)";
   if (value <= 3) {
     const t = value / 3;
     return `rgb(0,${Math.round(100 + t * 50)},${Math.round(255 - t * 100)})`;
@@ -109,27 +110,54 @@ function DrawPolygon({ onComplete, onPointAdded }: { onComplete: (points: any[])
     </>
   );
 }
-
 function GridOverlay({ field }: { field: Field }) {
   if (!field.grid || field.grid.length === 0) return null;
+
   const lats = field.points.map((p: any) => p.lat);
   const lngs = field.points.map((p: any) => p.lng);
   const minLat = Math.min(...lats), maxLat = Math.max(...lats);
   const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
   const rows = field.grid.length, cols = field.grid[0].length;
+
+  // Point in polygon check using ray casting
+  function pointInPolygon(lat: number, lng: number, polygon: any[]): boolean {
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const xi = polygon[i].lng, yi = polygon[i].lat;
+      const xj = polygon[j].lng, yj = polygon[j].lat;
+      const intersect = ((yi > lat) !== (yj > lat)) &&
+        (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
   return (
     <>
       {field.grid.flatMap((row, r) =>
-        row.map((value, c) => (
-          <Rectangle
-            key={`${r}-${c}`}
-            bounds={[
-              [maxLat - (r / rows) * (maxLat - minLat), minLng + (c / cols) * (maxLng - minLng)],
-              [maxLat - ((r + 1) / rows) * (maxLat - minLat), minLng + ((c + 1) / cols) * (maxLng - minLng)],
-            ]}
-            pathOptions={{ color: "transparent", fillColor: getColor(value), fillOpacity: 0.65, weight: 0 }}
-          />
-        ))
+        row.map((value, c) => {
+          const cellCenterLat = maxLat - ((r + 0.5) / rows) * (maxLat - minLat);
+          const cellCenterLng = minLng + ((c + 0.5) / cols) * (maxLng - minLng);
+
+          // Only draw if cell center is inside the polygon
+          if (!pointInPolygon(cellCenterLat, cellCenterLng, field.points)) return null;
+
+          return (
+            <Rectangle
+              key={`${r}-${c}`}
+              bounds={[
+                [maxLat - (r / rows) * (maxLat - minLat), minLng + (c / cols) * (maxLng - minLng)],
+                [maxLat - ((r + 1) / rows) * (maxLat - minLat), minLng + ((c + 1) / cols) * (maxLng - minLng)],
+              ]}
+              pathOptions={{
+                color: "transparent",
+                fillColor: getColor(value),
+                fillOpacity: 0.65,
+                weight: 0
+              }}
+            />
+          );
+        })
       )}
     </>
   );
@@ -356,8 +384,8 @@ function FieldMap({ lat, lng, onBack }: Props) {
           {savedFields.map((field, index) =>
             field.visible ? (
               <Polygon key={index} positions={field.points}
-              color={activeFieldIndex === index ? "white" : (field.et >= 4 && field.et <= 6 ? "green" : getColor(field.et || 5))}
-              fillColor={activeFieldIndex === index ? "white" : (field.et >= 4 && field.et <= 6 ? "green" : getColor(field.et || 5))}
+              color={activeFieldIndex === index ? "white" : getColor(field.et)}
+fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
                 fillOpacity={field.grid ? 0 : 0.35} weight={2}
                 eventHandlers={{ click: () => handleLoadField(index) }}
               />
