@@ -600,14 +600,32 @@ def return_data(
     Dr_today_2d   = np.clip(DR_PREV_2d - P_eff + ETc_2d, 0, TAW)
     IRRIGATION_2d = np.maximum(0.0, Dr_today_2d)
 
+    # ── MASK GRID TO ORIGINAL IRREGULAR FIELD ──
+    polygon = [(p["lng"], p["lat"]) for p in coordinates]
+
+    rows = IRRIGATION_2d.shape[0]
+    cols = IRRIGATION_2d.shape[1]
+
+    masked_grid = []
+
+    for r in range(rows):
+        row_data = []
+
+        for c in range(cols):
+            lng = west + (c + 0.5) / cols * (east - west)
+            lat = north - (r + 0.5) / rows * (north - south)
+
+            if point_in_polygon(lng, lat, polygon):
+                row_data.append(round(float(IRRIGATION_2d[r][c]), 2))
+            else:
+                row_data.append(None)
+
+        masked_grid.append(row_data)
+
     return {
-        "ETo":             round(float(ET0), 4),
-        "irrigation_avg":  round(float(IRRIGATION_L_M2), 4),
-        "irrigation_grid": [
-            [round(float(v), 2) for v in row]
-            for row in IRRIGATION_2d
-        ],
-        # FIXED: data_quality dict returned so callers can inspect every source and warning
+        "ETo": round(float(ET0), 4),
+        "irrigation_avg": round(float(IRRIGATION_L_M2), 4),
+        "irrigation_grid": masked_grid,
         "data_quality": data_quality,
     }
 
@@ -632,7 +650,25 @@ def parse_input(raw_json: str) -> tuple[list[dict], str, list[float]]:
 
 
 def bbox_from_coordinates(coords: list[dict]) -> tuple[float, float, float, float]:
-    """Return (west, south, east, north) from a list of {lat, lng} dicts."""
     lats = [c["lat"] for c in coords]
     lngs = [c["lng"] for c in coords]
     return min(lngs), min(lats), max(lngs), max(lats)
+
+
+# ADD THIS NEW FUNCTION
+def point_in_polygon(x: float, y: float, polygon: list[tuple]) -> bool:
+    inside = False
+    j = len(polygon) - 1
+
+    for i in range(len(polygon)):
+        xi, yi = polygon[i]
+        xj, yj = polygon[j]
+
+        if ((yi > y) != (yj > y)):
+            cross = (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi
+            if x < cross:
+                inside = not inside
+
+        j = i
+
+    return inside

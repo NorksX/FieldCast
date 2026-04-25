@@ -49,7 +49,6 @@ async def calculate():
         return_data,
         coordinates,
         crop_values,
-        crop_name,
     )
 
     warnings = results.get('data_quality', {}).get('warnings', [])
