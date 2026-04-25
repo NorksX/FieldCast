@@ -48,9 +48,17 @@ SENTINEL3_CDSE = DataCollection.SENTINEL3_SLSTR.define_from(
 # CUSTOM INPUT AREA + DATE
 # ─────────────────────────────────────────────
 
-def parse_coordinates(raw_json: str) -> list[dict]:
+def parse_input(raw_json: str) -> tuple[list[dict], float]:
+    """Return (coordinates, kc_value) from frontend JSON.
+
+    Expected format:
+        {"coordinates":[{"lat":41.7,"lng":21.5}, ...], "crop_type":"1.15"}
+    crop_type is the Kc value as a float string.
+    """
     data = json.loads(raw_json)
-    return data["coordinates"]
+    coords = data["coordinates"]
+    kc_value = float(data.get("crop_type", 1.0))
+    return coords, kc_value
 
 def bbox_from_coordinates(coords: list[dict]) -> tuple[float, float, float, float]:
     """Return (west, south, east, north) from a list of {lat, lng} dicts."""
@@ -63,43 +71,32 @@ def bbox_from_coordinates(coords: list[dict]) -> tuple[float, float, float, floa
 
 try:
     if len(sys.argv) > 1:
-        coordinates = parse_coordinates(sys.argv[1])
+        coordinates, KC_OVERRIDE = parse_input(sys.argv[1])
 
     elif not sys.stdin.isatty():
-        coordinates = parse_coordinates(sys.stdin.read())
+        coordinates, KC_OVERRIDE = parse_input(sys.stdin.read())
 
     else:
-        raise ValueError("No coordinates received from frontend.")
+        raise ValueError("No input received from frontend.")
 
 except Exception as e:
-    print("\nERROR: Coordinates are required from the frontend.")
+    print("\nERROR: Input is required from the frontend.")
     print("Expected JSON format:")
-    print('{"coordinates":[{"lat":41.7,"lng":21.5}, ...]}')
+    print('{"coordinates":[{"lat":41.7,"lng":21.5}, ...], "crop_type":"1.15"}')
     sys.exit(1)
 west, south, east, north = bbox_from_coordinates(coordinates)
 
 date_target = None   # None = today, or "2026-04-24"
 
 # ── CROP SETTINGS ────────────────────────────
-# Set your crop type and growth stage for Kc lookup.
-# Kc values from FAO-56 Table 12.
-CROP_TYPE   = "tomato"    # e.g. "tomato", "wheat", "maize", "cotton", "potato", "bare_soil"
-GROWTH_STAGE = "mid"      # "ini" (initial), "dev" (development), "mid" (mid-season), "late"
-
-# Kc table: {crop: {stage: Kc}}
-KC_TABLE = {
-    "tomato":     {"ini": 0.40, "dev": 0.80, "mid": 1.15, "late": 0.70},
-    "wheat":      {"ini": 0.30, "dev": 0.70, "mid": 1.15, "late": 0.25},
-    "maize":      {"ini": 0.30, "dev": 0.70, "mid": 1.20, "late": 0.35},
-    "cotton":     {"ini": 0.35, "dev": 0.75, "mid": 1.15, "late": 0.50},
-    "potato":     {"ini": 0.50, "dev": 0.75, "mid": 1.15, "late": 0.75},
-    "bare_soil":  {"ini": 0.30, "dev": 0.30, "mid": 0.30, "late": 0.30},
-}
+# Kc value comes directly from the frontend as crop_type (float string).
+# GROWTH_STAGE is derived automatically from the 60-day NDVI time series (see below).
+KC_DIRECT    = KC_OVERRIDE   # Kc passed in from frontend
+GROWTH_STAGE = "mid"         # placeholder; overwritten by NDVI time-series logic below
 
 # ── SOIL SETTINGS ─────────────────────────────
-# Total Available Water (TAW) depends on soil texture.
-# sandy ~100 mm, loam ~150 mm, clay ~200 mm
-SOIL_TYPE = "loam"        # "sandy", "loam", "clay"
+# SOIL_TYPE and TAW are derived automatically from SoilGrids API (see below).
+SOIL_TYPE = "loam"        # placeholder; overwritten by SoilGrids query below
 
 TAW_TABLE = {
     "sandy": 100.0,
@@ -107,9 +104,9 @@ TAW_TABLE = {
     "clay":  200.0,
 }
 
-# Previous day's root zone depletion (mm).
-# On first run set to 0 (full field capacity) or load from your daily log.
-DR_PREV = 0.0             # Dr,i-1 in FAO-56 Eq. 85
+# DR_PREV is computed automatically from Sentinel-1 soil moisture below.
+# Fallback (no S1 data): assume field capacity (zero depletion).
+DR_PREV = 0.0   # overwritten when SM_SOURCE == "Sentinel-1"
 
 # ─────────────────────────────────────────────
 # AUTO DATE HANDLING
@@ -217,6 +214,143 @@ if config.sh_client_id and config.sh_client_secret:
 
     except Exception as e:
         print(f"[S2] No data, using defaults. ({e})")
+
+# ─────────────────────────────────────────────
+# GROWTH STAGE — derived from 60-day NDVI time series (Sentinel-2)
+# Logic: find peak NDVI; compare today's value to classify stage.
+# ─────────────────────────────────────────────
+
+if config.sh_client_id and config.sh_client_secret:
+
+    evalscript_ndvi_ts = """
+    //VERSION=3
+    function setup() {
+      return {
+        input: [{bands:["B04","B08"],units:"REFLECTANCE"}],
+        output:{bands:1,sampleType:"FLOAT32"},
+        mosaicking: "ORBIT"
+      };
+    }
+    function evaluatePixel(samples){
+      var total = 0, count = 0;
+      for (var i = 0; i < samples.length; i++) {
+        var b4 = samples[i].B04, b8 = samples[i].B08;
+        if (b8 + b4 > 0) { total += (b8 - b4) / (b8 + b4); count++; }
+      }
+      return [count > 0 ? total / count : 0];
+    }
+    """
+
+    ts_start = (target_date - timedelta(days=60)).strftime("%Y-%m-%d")
+    ts_end   = DATE_TARGET
+
+    try:
+        from sentinelhub import SentinelHubStatistical, Geometry
+        import shapely.geometry
+
+        geo = shapely.geometry.box(west, south, east, north)
+        geometry = Geometry(geo, CRS.WGS84)
+
+        stat_request = SentinelHubStatistical(
+            aggregation=SentinelHubStatistical.aggregation(
+                evalscript=evalscript_ndvi_ts,
+                time_interval=(ts_start, ts_end),
+                aggregation_interval="P5D",
+                size=size
+            ),
+            input_data=[
+                SentinelHubStatistical.input_data(
+                    SENTINEL2_CDSE,
+                    maxcc=0.3
+                )
+            ],
+            geometry=geometry,
+            config=config
+        )
+
+        ts_data = stat_request.get_data()[0]
+        ndvi_series = []
+        for interval in ts_data.get("data", []):
+            val = interval.get("outputs", {}).get("default", {}).get("bands", {}).get("B0", {}).get("stats", {}).get("mean")
+            if val is not None and not math.isnan(val):
+                ndvi_series.append(val)
+
+        if len(ndvi_series) >= 3:
+            peak_ndvi = max(ndvi_series)
+            peak_idx  = ndvi_series.index(peak_ndvi)
+            last_ndvi = ndvi_series[-1]
+            frac      = last_ndvi / (peak_ndvi + 1e-9)
+
+            if peak_idx >= len(ndvi_series) - 2:
+                # Still rising toward peak
+                if frac < 0.5:
+                    GROWTH_STAGE = "ini"
+                else:
+                    GROWTH_STAGE = "dev"
+            else:
+                # Past peak
+                if frac >= 0.90:
+                    GROWTH_STAGE = "mid"
+                else:
+                    GROWTH_STAGE = "late"
+        else:
+            GROWTH_STAGE = "mid"   # insufficient data; keep default
+
+    except Exception as e:
+        print(f"[S2-TS] NDVI time series failed, using default growth stage. ({e})")
+
+# ─────────────────────────────────────────────
+# SOIL TYPE + TAW — SoilGrids REST API (ISRIC)
+# Queries sand/clay % at 0–30 cm depth for LAT/LON.
+# ─────────────────────────────────────────────
+
+TAW_TABLE = {
+    "sandy": 100.0,
+    "loam":  150.0,
+    "clay":  200.0,
+}
+
+try:
+    sg_resp = requests.get(
+        "https://rest.isric.org/soilgrids/v2.0/properties/query",
+        params={
+            "lon":        LON,
+            "lat":        LAT,
+            "property":   ["clay", "sand"],
+            "depth":      ["0-5cm", "5-15cm", "15-30cm"],
+            "value":      "mean",
+        },
+        timeout=20
+    )
+    sg_data = sg_resp.json()
+
+    def _sg_mean(prop_name):
+        for layer in sg_data["properties"]["layers"]:
+            if layer["name"] == prop_name:
+                vals = [
+                    d["values"].get("mean")
+                    for d in layer["depths"]
+                    if d["values"].get("mean") is not None
+                ]
+                if vals:
+                    # SoilGrids returns g/kg (‰); divide by 10 to get %
+                    return np.mean(vals) / 10.0
+        return None
+
+    clay_pct = _sg_mean("clay")
+    sand_pct = _sg_mean("sand")
+
+    if clay_pct is not None and sand_pct is not None:
+        if sand_pct >= 70:
+            SOIL_TYPE = "sandy"
+        elif clay_pct >= 40:
+            SOIL_TYPE = "clay"
+        else:
+            SOIL_TYPE = "loam"
+    # else keep placeholder "loam"
+
+except Exception as e:
+    print(f"[SoilGrids] API error, using default soil type. ({e})")
 
 # ─────────────────────────────────────────────
 # STAGE 1 INPUTS — SENTINEL-3 (LST)
@@ -404,7 +538,7 @@ ET0 = fao.fao56_penman_monteith(
 # ETc = ET₀ × Kc
 # ─────────────────────────────────────────────
 
-Kc  = KC_TABLE.get(CROP_TYPE, KC_TABLE["bare_soil"]).get(GROWTH_STAGE, 1.0)
+Kc  = KC_DIRECT   # Kc supplied directly by the frontend as crop_type
 ETc = ET0 * Kc      # mm/day, crop water demand
 
 # ─────────────────────────────────────────────
@@ -472,9 +606,8 @@ print(f"\n  ET₀ = {ET0:.2f} mm/day\n")
 print("=" * 60)
 print("STAGE 2 — Crop-specific evapotranspiration")
 print("=" * 60)
-print(f"  Crop type     : {CROP_TYPE}")
-print(f"  Growth stage  : {GROWTH_STAGE}")
-print(f"  Kc            : {Kc:.2f}")
+print(f"  Kc (from frontend) : {Kc:.2f}")
+print(f"  Growth stage       : {GROWTH_STAGE}  (derived from 60-day NDVI trend)")
 print(f"  ETc = ET₀ × Kc = {ET0:.2f} × {Kc:.2f} = {ETc:.2f} mm/day\n")
 
 print("=" * 60)
@@ -507,8 +640,9 @@ df = pd.DataFrame([
     {"Stage": 1, "Parameter": "NDVI",                           "Value": f"{NDVI_mean:.4f}", "Unit": "—"},
     {"Stage": 1, "Parameter": "ET₀",                            "Value": f"{ET0:.2f}",    "Unit": "mm/day"},
     # Stage 2
-    {"Stage": 2, "Parameter": "Kc",                             "Value": f"{Kc:.2f}",     "Unit": "—"},
-    {"Stage": 2, "Parameter": "ETc (crop demand)",              "Value": f"{ETc:.2f}",    "Unit": "mm/day"},
+    {"Stage": 2, "Parameter": "Kc (from frontend)",              "Value": f"{Kc:.2f}",     "Unit": "—"},
+    {"Stage": 2, "Parameter": "Growth stage (NDVI-derived)",     "Value": GROWTH_STAGE,     "Unit": "—"},
+    {"Stage": 2, "Parameter": "ETc (crop demand)",               "Value": f"{ETc:.2f}",    "Unit": "mm/day"},
     # Stage 3
     {"Stage": 3, "Parameter": "TAW",                            "Value": f"{TAW:.0f}",    "Unit": "mm"},
     {"Stage": 3, "Parameter": "SM fraction (Sentinel-1)",       "Value": f"{SM_FRACTION:.2f}", "Unit": "0–1"},
