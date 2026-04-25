@@ -17,6 +17,8 @@ crop_mapping = {
     "Wheat": [0.3, 1.15, 0.35]
 }
 
+crop_list = list(crop_mapping.keys())
+
 
 @app.route('/api/crops', methods=['GET'])
 async def get_crops():
@@ -34,7 +36,6 @@ async def calculate():
     crop_index = data.get('crop_index')
 
     # Quart natively supports async!
-    crop_list = list(crop_mapping.keys())
     crop_string = crop_list[crop_index]
     crop_values = crop_mapping[crop_string]
 
