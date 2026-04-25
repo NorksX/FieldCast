@@ -48,17 +48,22 @@ SENTINEL3_CDSE = DataCollection.SENTINEL3_SLSTR.define_from(
 # CUSTOM INPUT AREA + DATE
 # ─────────────────────────────────────────────
 
-def parse_input(raw_json: str) -> tuple[list[dict], float]:
-    """Return (coordinates, kc_value) from frontend JSON.
+def parse_input(raw_json: str) -> tuple[list[dict], str, list[float]]:
+    """Return (coordinates, crop_name, kc_list) from frontend JSON.
 
     Expected format:
-        {"coordinates":[{"lat":41.7,"lng":21.5}, ...], "crop_type":"1.15"}
-    crop_type is the Kc value as a float string.
+        {"coordinates":[{"lat":41.7,"lng":21.5}, ...],
+         "crop_type": {"Cabbage": [0.7, 1.05, 0.95]}}
+
+    kc_list indices: 0 = ini, 1 = mid, 2 = end
+    The correct Kc is selected after GROWTH_STAGE is derived from NDVI.
     """
     data = json.loads(raw_json)
     coords = data["coordinates"]
-    kc_value = float(data.get("crop_type", 1.0))
-    return coords, kc_value
+    crop_type = data.get("crop_type", {"Unknown": [1.0, 1.0, 1.0]})
+    crop_name = list(crop_type.keys())[0]
+    kc_list   = [float(v) for v in list(crop_type.values())[0]]
+    return coords, crop_name, kc_list
 
 def bbox_from_coordinates(coords: list[dict]) -> tuple[float, float, float, float]:
     """Return (west, south, east, north) from a list of {lat, lng} dicts."""
@@ -71,10 +76,10 @@ def bbox_from_coordinates(coords: list[dict]) -> tuple[float, float, float, floa
 
 try:
     if len(sys.argv) > 1:
-        coordinates, KC_OVERRIDE = parse_input(sys.argv[1])
+        coordinates, CROP_NAME, KC_LIST = parse_input(sys.argv[1])
 
     elif not sys.stdin.isatty():
-        coordinates, KC_OVERRIDE = parse_input(sys.stdin.read())
+        coordinates, CROP_NAME, KC_LIST = parse_input(sys.stdin.read())
 
     else:
         raise ValueError("No input received from frontend.")
@@ -82,17 +87,19 @@ try:
 except Exception as e:
     print("\nERROR: Input is required from the frontend.")
     print("Expected JSON format:")
-    print('{"coordinates":[{"lat":41.7,"lng":21.5}, ...], "crop_type":"1.15"}')
+    print('{"coordinates":[{"lat":41.7,"lng":21.5}, ...], "crop_type":{"Cabbage":[0.7,1.05,0.95]}}')
     sys.exit(1)
 west, south, east, north = bbox_from_coordinates(coordinates)
 
 date_target = None   # None = today, or "2026-04-24"
 
 # ── CROP SETTINGS ────────────────────────────
-# Kc value comes directly from the frontend as crop_type (float string).
+# crop_type from the frontend: {"CropName": [Kc_ini, Kc_mid, Kc_end]}
 # GROWTH_STAGE is derived automatically from the 60-day NDVI time series (see below).
-KC_DIRECT    = KC_OVERRIDE   # Kc passed in from frontend
-GROWTH_STAGE = "mid"         # placeholder; overwritten by NDVI time-series logic below
+# The matching Kc is selected from KC_LIST after GROWTH_STAGE is known.
+GROWTH_STAGE = "mid"   # placeholder; overwritten by NDVI time-series logic below
+
+STAGE_TO_IDX = {"ini": 0, "dev": 0, "mid": 1, "late": 2, "end": 2}
 
 # ── SOIL SETTINGS ─────────────────────────────
 # SOIL_TYPE and TAW are derived automatically from SoilGrids API (see below).
@@ -538,7 +545,7 @@ ET0 = fao.fao56_penman_monteith(
 # ETc = ET₀ × Kc
 # ─────────────────────────────────────────────
 
-Kc  = KC_DIRECT   # Kc supplied directly by the frontend as crop_type
+Kc  = KC_LIST[STAGE_TO_IDX.get(GROWTH_STAGE, 1)]   # select from [ini, mid, end] via NDVI-derived stage
 ETc = ET0 * Kc      # mm/day, crop water demand
 
 # ─────────────────────────────────────────────
@@ -606,8 +613,9 @@ print(f"\n  ET₀ = {ET0:.2f} mm/day\n")
 print("=" * 60)
 print("STAGE 2 — Crop-specific evapotranspiration")
 print("=" * 60)
-print(f"  Kc (from frontend) : {Kc:.2f}")
+print(f"  Crop               : {CROP_NAME}")
 print(f"  Growth stage       : {GROWTH_STAGE}  (derived from 60-day NDVI trend)")
+print(f"  Kc                 : {Kc:.2f}  (Kc_ini={KC_LIST[0]:.2f}, Kc_mid={KC_LIST[1]:.2f}, Kc_end={KC_LIST[2]:.2f})")
 print(f"  ETc = ET₀ × Kc = {ET0:.2f} × {Kc:.2f} = {ETc:.2f} mm/day\n")
 
 print("=" * 60)
@@ -640,8 +648,9 @@ df = pd.DataFrame([
     {"Stage": 1, "Parameter": "NDVI",                           "Value": f"{NDVI_mean:.4f}", "Unit": "—"},
     {"Stage": 1, "Parameter": "ET₀",                            "Value": f"{ET0:.2f}",    "Unit": "mm/day"},
     # Stage 2
-    {"Stage": 2, "Parameter": "Kc (from frontend)",              "Value": f"{Kc:.2f}",     "Unit": "—"},
+    {"Stage": 2, "Parameter": "Crop name",                       "Value": CROP_NAME,        "Unit": "—"},
     {"Stage": 2, "Parameter": "Growth stage (NDVI-derived)",     "Value": GROWTH_STAGE,     "Unit": "—"},
+    {"Stage": 2, "Parameter": "Kc (selected)",                   "Value": f"{Kc:.2f}",      "Unit": "—"},
     {"Stage": 2, "Parameter": "ETc (crop demand)",               "Value": f"{ETc:.2f}",    "Unit": "mm/day"},
     # Stage 3
     {"Stage": 3, "Parameter": "TAW",                            "Value": f"{TAW:.0f}",    "Unit": "mm"},
