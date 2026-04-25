@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pyeto.fao as fao
 import getpass
+import json
+import sys
 
 from datetime import datetime, timedelta, date
 
@@ -46,10 +48,35 @@ SENTINEL3_CDSE = DataCollection.SENTINEL3_SLSTR.define_from(
 # CUSTOM INPUT AREA + DATE
 # ─────────────────────────────────────────────
 
-west  = 21.705
-south = 42.118
-east  = 21.715
-north = 42.126
+def parse_coordinates(raw_json: str) -> list[dict]:
+    data = json.loads(raw_json)
+    return data["coordinates"]
+
+def bbox_from_coordinates(coords: list[dict]) -> tuple[float, float, float, float]:
+    """Return (west, south, east, north) from a list of {lat, lng} dicts."""
+    lats = [c["lat"] for c in coords]
+    lngs = [c["lng"] for c in coords]
+    return min(lngs), min(lats), max(lngs), max(lats)
+
+# Resolve coordinate source
+# Coordinates MUST come from frontend (CLI or stdin)
+
+try:
+    if len(sys.argv) > 1:
+        coordinates = parse_coordinates(sys.argv[1])
+
+    elif not sys.stdin.isatty():
+        coordinates = parse_coordinates(sys.stdin.read())
+
+    else:
+        raise ValueError("No coordinates received from frontend.")
+
+except Exception as e:
+    print("\nERROR: Coordinates are required from the frontend.")
+    print("Expected JSON format:")
+    print('{"coordinates":[{"lat":41.7,"lng":21.5}, ...]}')
+    sys.exit(1)
+west, south, east, north = bbox_from_coordinates(coordinates)
 
 date_target = None   # None = today, or "2026-04-24"
 
