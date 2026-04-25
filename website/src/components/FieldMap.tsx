@@ -34,22 +34,16 @@ const countries = [
 function getColor(value: number): string {
   if (value <= 3) {
     const t = value / 3;
-    const g = Math.round(100 + t * 50);
-    const b = Math.round(255 - t * 100);
-    return `rgb(0,${g},${b})`;
+    return `rgb(0,${Math.round(100 + t * 50)},${Math.round(255 - t * 100)})`;
   } else if (value <= 6) {
     const t = (value - 3) / 3;
-    const r = Math.round(t * 50);
-    const g = Math.round(200 - t * 50);
-    return `rgb(${r},${g},0)`;
+    return `rgb(${Math.round(t * 50)},${Math.round(200 - t * 50)},0)`;
   } else if (value <= 9) {
     const t = (value - 6) / 3;
-    const g = Math.round(255 - t * 100);
-    return `rgb(255,${g},0)`;
+    return `rgb(255,${Math.round(255 - t * 100)},0)`;
   } else if (value <= 12) {
     const t = (value - 9) / 3;
-    const g = Math.round(165 - t * 100);
-    return `rgb(255,${g},0)`;
+    return `rgb(255,${Math.round(165 - t * 100)},0)`;
   } else {
     return `rgb(255,0,0)`;
   }
@@ -62,11 +56,8 @@ function calculateArea(points: any[]): number {
   const n = points.length;
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
-    const lat1 = toRad(points[i].lat);
-    const lat2 = toRad(points[j].lat);
-    const lng1 = toRad(points[i].lng);
-    const lng2 = toRad(points[j].lng);
-    area += (lng2 - lng1) * (2 + Math.sin(lat1) + Math.sin(lat2));
+    area += (toRad(points[j].lng) - toRad(points[i].lng)) *
+      (2 + Math.sin(toRad(points[i].lat)) + Math.sin(toRad(points[j].lat)));
   }
   return Math.round(Math.abs(area * R * R / 2));
 }
@@ -85,11 +76,7 @@ function FlyToField({ points }: { points: any[] }) {
     if (points.length === 0) return;
     const lats = points.map((p: any) => p.lat);
     const lngs = points.map((p: any) => p.lng);
-    const bounds: [[number, number], [number, number]] = [
-      [Math.min(...lats), Math.min(...lngs)],
-      [Math.max(...lats), Math.max(...lngs)],
-    ];
-    map.fitBounds(bounds, { padding: [60, 60] });
+    map.fitBounds([[Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)]], { padding: [60, 60] });
   }, [points]);
   return null;
 }
@@ -97,47 +84,26 @@ function FlyToField({ points }: { points: any[] }) {
 function FlyToCountry({ center }: { center: [number, number] }) {
   const map = useMap();
   const isFirstRender = useRef(true);
-
   useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false;
-      return;
-    }
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
     map.flyTo(center, 7, { duration: 1.5 });
   }, [center]);
   return null;
 }
 
-function DrawPolygon({ onComplete, onPointAdded }: { onComplete: (points: any[]) => void, onPointAdded: () => void }) {
+function DrawPolygon({ onComplete, onPointAdded }: { onComplete: (points: any[]) => void; onPointAdded: () => void }) {
   const [points, setPoints] = useState<any[]>([]);
-
   useMapEvents({
     click(e) {
-      const newPoint = e.latlng;
-      const newPoints = [...points, newPoint];
-      if (newPoints.length === 4) {
-        onComplete(newPoints);
-        setPoints([]);
-        return;
-      }
+      const newPoints = [...points, e.latlng];
+      if (newPoints.length === 4) { onComplete(newPoints); setPoints([]); return; }
       setPoints(newPoints);
       onPointAdded();
     },
   });
-
   return (
     <>
-      {points.map((point, index) => (
-        <CircleMarker
-          key={index}
-          center={point}
-          radius={index === 0 ? 5 : 3}
-          color="white"
-          fillColor="white"
-          fillOpacity={0.9}
-          weight={1}
-        />
-      ))}
+      {points.map((point, i) => <CircleMarker key={i} center={point} radius={i === 0 ? 5 : 3} color="white" fillColor="white" fillOpacity={0.9} weight={1} />)}
       {points.length > 1 && <Polyline positions={points} color="white" weight={1.5} opacity={0.8} />}
       {points.length > 2 && <Polygon positions={points} color="white" fillOpacity={0.1} weight={1.5} />}
     </>
@@ -146,43 +112,44 @@ function DrawPolygon({ onComplete, onPointAdded }: { onComplete: (points: any[])
 
 function GridOverlay({ field }: { field: Field }) {
   if (!field.grid || field.grid.length === 0) return null;
-
   const lats = field.points.map((p: any) => p.lat);
   const lngs = field.points.map((p: any) => p.lng);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs);
-  const maxLng = Math.max(...lngs);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  const rows = field.grid.length, cols = field.grid[0].length;
+  return (
+    <>
+      {field.grid.flatMap((row, r) =>
+        row.map((value, c) => (
+          <Rectangle
+            key={`${r}-${c}`}
+            bounds={[
+              [maxLat - (r / rows) * (maxLat - minLat), minLng + (c / cols) * (maxLng - minLng)],
+              [maxLat - ((r + 1) / rows) * (maxLat - minLat), minLng + ((c + 1) / cols) * (maxLng - minLng)],
+            ]}
+            pathOptions={{ color: "transparent", fillColor: getColor(value), fillOpacity: 0.65, weight: 0 }}
+          />
+        ))
+      )}
+    </>
+  );
+}
 
-  const rows = field.grid.length;
-  const cols = field.grid[0].length;
-
-  const cells: JSX.Element[] = [];
-
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const value = field.grid[r][c];
-      const cellLat = maxLat - (r / rows) * (maxLat - minLat);
-      const cellLng = minLng + (c / cols) * (maxLng - minLng);
-      const nextLat = maxLat - ((r + 1) / rows) * (maxLat - minLat);
-      const nextLng = minLng + ((c + 1) / cols) * (maxLng - minLng);
-
-      cells.push(
-        <Rectangle
-          key={`${r}-${c}`}
-          bounds={[[cellLat, cellLng], [nextLat, nextLng]]}
-          pathOptions={{
-            color: "transparent",
-            fillColor: getColor(value),
-            fillOpacity: 0.65,
-            weight: 0,
-          }}
-        />
-      );
-    }
-  }
-
-  return <>{cells}</>;
+function ZoomControlPortal() {
+  const map = useMap();
+  return (
+    <div style={{ position: "absolute", top: 12, left: 12, zIndex: 1000 }}>
+      {["+", "−"].map((sym, i) => (
+        <button key={sym} onClick={() => i === 0 ? map.zoomIn() : map.zoomOut()} style={{
+          display: "block", width: 36, height: 36,
+          borderRadius: i === 0 ? "6px 6px 0 0" : "0 0 6px 6px",
+          background: "rgba(0,0,0,0.65)", border: "1px solid rgba(255,255,255,0.2)",
+          borderTop: i === 1 ? "none" : undefined,
+          color: "white", fontSize: "20px", cursor: "pointer", lineHeight: "36px", textAlign: "center",
+        }}>{sym}</button>
+      ))}
+    </div>
+  );
 }
 
 function FieldMap({ lat, lng, onBack }: Props) {
@@ -190,54 +157,42 @@ function FieldMap({ lat, lng, onBack }: Props) {
   const [message, setMessage] = useState("");
   const [savedFields, setSavedFields] = useState<Field[]>([]);
   const [activeFieldIndex, setActiveFieldIndex] = useState<number | null>(null);
-  const [showTools, setShowTools] = useState(false);
   const [mapCenter, setMapCenter] = useState<[number, number]>([lat, lng]);
   const [flyToPoints, setFlyToPoints] = useState<any[]>([]);
   const [isCalculating, setIsCalculating] = useState(false);
-  const [plants] = useState<string[]>([
-    "Wheat", "Corn", "Sunflower", "Barley",
-    "Soybean", "Potato", "Tomato", "Grape",
-  ]);
+  const [plants, setPlants] = useState<string[]>([]);
   const [selectedPlantIndex, setSelectedPlantIndex] = useState<number | null>(null);
+  const [showPlantPicker, setShowPlantPicker] = useState(false);
+  const [cropSearch, setCropSearch] = useState("");
 
   const activeField = activeFieldIndex !== null ? savedFields[activeFieldIndex] : null;
+  const filteredPlants = plants.filter(p => p.toLowerCase().includes(cropSearch.toLowerCase()));
 
-  const showMessage = (msg: string) => {
-    setMessage(msg);
-    setTimeout(() => setMessage(""), 3000);
-  };
+  useEffect(() => {
+    fetch("http://localhost:5000/api/crops")
+      .then(res => res.json())
+      .then(data => setPlants(data.crops))
+      .catch(() => setPlants(["Wheat", "Barley", "Sunflower", "Potato", "Cabbage", "Carrot", "Lettuce", "Watermelon", "Strawberries"]));
+  }, []);
+
+  const showMessage = (msg: string) => { setMessage(msg); setTimeout(() => setMessage(""), 3000); };
 
   const handleComplete = (points: any[]) => {
     const area = calculateArea(points);
     setFlyToPoints(points);
     setSelectMode(false);
-
-    const newField: Field = {
-      name: null,
-      points,
-      area,
-      et: 0,
-      eto: null,
-      grid: null,
-      visible: true,
-    };
-
+    const newField: Field = { name: null, points, area, et: 0, eto: null, grid: null, visible: true };
     const newFields = [...savedFields, newField];
     setSavedFields(newFields);
     setActiveFieldIndex(newFields.length - 1);
-    showMessage("Field selected — choose a plant and click Calculate");
+    showMessage("Field selected — choose a plant and calculate");
   };
 
   const handleCalculate = async () => {
-    if (selectedPlantIndex === null) {
-      showMessage("Please select a plant first");
-      return;
-    }
+    if (selectedPlantIndex === null) { showMessage("Please select a plant first"); return; }
     if (activeFieldIndex === null || !activeField) return;
-
     setIsCalculating(true);
     showMessage("Calculating...");
-
     try {
       const response = await fetch("http://localhost:5000/api/calculate", {
         method: "POST",
@@ -247,31 +202,25 @@ function FieldMap({ lat, lng, onBack }: Props) {
           crop_index: selectedPlantIndex,
         }),
       });
-
       const data = await response.json();
       const { ETo, irrigation_avg, irrigation_grid } = data.results;
-
       const updated = [...savedFields];
-      updated[activeFieldIndex] = {
-        ...updated[activeFieldIndex],
-        et: irrigation_avg,
-        eto: ETo,
-        grid: irrigation_grid,
-      };
+      updated[activeFieldIndex] = { ...updated[activeFieldIndex], et: irrigation_avg, eto: ETo, grid: irrigation_grid };
       setSavedFields(updated);
       showMessage("Calculation complete!");
-    } catch (e) {
+    } catch {
       showMessage("Error connecting to server");
     } finally {
       setIsCalculating(false);
     }
   };
 
-  const handleNewSelection = () => {
-    setActiveFieldIndex(null);
-    setFlyToPoints([]);
-    setSelectMode(true);
-    setShowTools(false);
+  const handleDeleteField = (index: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = savedFields.filter((_, i) => i !== index);
+    setSavedFields(updated);
+    if (activeFieldIndex === index) { setActiveFieldIndex(null); setFlyToPoints([]); }
+    else if (activeFieldIndex !== null && activeFieldIndex > index) setActiveFieldIndex(activeFieldIndex - 1);
   };
 
   const handleRenameField = () => {
@@ -284,7 +233,8 @@ function FieldMap({ lat, lng, onBack }: Props) {
     }
   };
 
-  const toggleVisibility = (index: number) => {
+  const toggleVisibility = (index: number, e: React.MouseEvent) => {
+    e.stopPropagation();
     const updated = [...savedFields];
     updated[index].visible = !updated[index].visible;
     setSavedFields(updated);
@@ -293,333 +243,302 @@ function FieldMap({ lat, lng, onBack }: Props) {
   const handleLoadField = (index: number) => {
     setActiveFieldIndex(index);
     setFlyToPoints(savedFields[index].points);
-    setShowTools(false);
   };
 
   const handleCountryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const country = countries.find(c => c.name === e.target.value);
-    if (country) {
-      setMapCenter([country.lat, country.lng]);
-      setFlyToPoints([]);
-    }
+    if (country) { setMapCenter([country.lat, country.lng]); setFlyToPoints([]); }
   };
 
-  const btnStyle: React.CSSProperties = {
-    width: "100%",
-    padding: "8px",
-    borderRadius: "6px",
-    border: "1px solid rgba(255,255,255,0.2)",
-    background: "rgba(255,255,255,0.05)",
-    color: "rgba(255,255,255,0.7)",
-    fontSize: "12px",
-    cursor: "pointer",
-    marginBottom: 8,
+  const inputStyle: React.CSSProperties = {
+    width: "100%", padding: "7px 10px", borderRadius: "6px", boxSizing: "border-box",
+    border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)",
+    color: "white", fontSize: "11px", outline: "none",
+  };
+
+  const smallBtn: React.CSSProperties = {
+    padding: "7px 10px", borderRadius: "7px",
+    border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)",
+    color: "rgba(255,255,255,0.7)", fontSize: "11px", cursor: "pointer", width: "100%",
   };
 
   return (
-    <>
-      <MapContainer
-        center={mapCenter}
-        zoom={7}
-        style={{ width: "100vw", height: "100vh", position: "fixed", top: 0, left: 0 }}
-      >
-        <TileLayer
-          url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-          attribution="Tiles © Esri"
-        />
-        <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution="© OpenStreetMap contributors"
-          opacity={0.4}
-        />
-        <FlyToCountry center={mapCenter} />
-        {flyToPoints.length > 0 && <FlyToField points={flyToPoints} />}
-        {selectMode && (
-          <DrawPolygon
-            onComplete={handleComplete}
-            onPointAdded={() => showMessage("Point added")}
-          />
-        )}
+    <div style={{ display: "flex", width: "100vw", height: "100vh", background: "#0d1420", overflow: "hidden" }}>
 
-        {/* Field polygons */}
-        {savedFields.map((field, index) =>
-          field.visible ? (
-            <Polygon
-              key={index}
-              positions={field.points}
-              color={getColor(field.et)}
-              fillColor={getColor(field.et)}
-              fillOpacity={field.grid ? 0 : 0.4}
-              weight={2}
-              eventHandlers={{ click: () => handleLoadField(index) }}
-            />
-          ) : null
-        )}
-
-        {/* Grid overlays */}
-        {savedFields.map((field, index) =>
-          field.visible && field.grid ? (
-            <GridOverlay key={`grid-${index}`} field={field} />
-          ) : null
-        )}
-      </MapContainer>
-
-      {/* Country selector */}
-      <div style={{ position: "fixed", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 1000 }}>
-        <select
-          onChange={handleCountryChange}
-          style={{
-            background: "rgba(0,0,0,0.6)",
-            color: "white",
-            border: "1px solid rgba(255,255,255,0.2)",
-            width: "200px",
-            padding: "6px 12px",
-            borderRadius: "6px",
-            fontSize: "12px",
-            cursor: "pointer",
-          }}
-        >
-          <option value="">-- Go to country --</option>
-          {countries.map((c) => (
-            <option key={c.name} value={c.name} style={{ background: "#0d1420" }}>{c.name}</option>
-          ))}
-        </select>
-      </div>
-
-      {selectMode && (
-        <div style={{
-          position: "fixed", top: 50, left: "50%", transform: "translateX(-50%)",
-          zIndex: 1000, background: "rgba(0,0,0,0.5)", color: "rgba(255,255,255,0.8)",
-          padding: "6px 16px", borderRadius: "6px", fontSize: "12px",
-        }}>
-          Click 4 points to select your field
-        </div>
-      )}
-
-      {message && (
-        <div style={{
-          position: "fixed", bottom: 40, left: 12, zIndex: 1000,
-          background: "rgba(0,0,0,0.5)", color: "rgba(255,255,255,0.8)",
-          padding: "5px 12px", borderRadius: "6px", fontSize: "11px",
-        }}>
-          {message}
-        </div>
-      )}
-
-      {/* Tools dropdown - shifts left when details card is open */}
+      {/* ── LEFT SIDEBAR ── */}
       <div style={{
-        position: "fixed",
-        top: 12,
-        right: activeField ? "252px" : "12px",
-        zIndex: 1000,
-        transition: "right 0.2s ease",
+        width: 160, minWidth: 160, height: "100vh",
+        background: "rgba(0,0,0,0.8)", backdropFilter: "blur(12px)",
+        borderRight: "1px solid rgba(255,255,255,0.08)",
+        display: "flex", flexDirection: "column", padding: "12px 10px",
+        gap: 8, zIndex: 1000, boxSizing: "border-box",
       }}>
+        <select onChange={handleCountryChange} style={{ ...inputStyle }}>
+          <option value="">— Country —</option>
+          {countries.map(c => <option key={c.name} value={c.name} style={{ background: "#0d1420" }}>{c.name}</option>)}
+        </select>
+
         <button
+          onClick={() => { setSelectMode(!selectMode); if (!selectMode) { setActiveFieldIndex(null); setFlyToPoints([]); } }}
           style={{
-            padding: "6px 14px", fontSize: "12px", fontWeight: 500,
-            borderRadius: "6px", border: "1px solid rgba(255,255,255,0.2)",
-            cursor: "pointer", background: "rgba(255,255,255,0.1)", color: "white",
+            ...smallBtn, textAlign: "center", fontWeight: 500,
+            background: selectMode ? "rgba(220,50,50,0.3)" : "rgba(255,255,255,0.07)",
+            border: selectMode ? "1px solid rgba(220,80,80,0.4)" : "1px solid rgba(255,255,255,0.15)",
+            color: "white",
           }}
-          onClick={() => setShowTools(!showTools)}
         >
-          Tools
+          {selectMode ? "Cancel" : "Select Field"}
         </button>
 
-        {showTools && (
-          <div style={{
-            position: "absolute", top: 36, right: 0,
-            background: "rgba(0,0,0,0.85)", backdropFilter: "blur(10px)",
-            border: "1px solid rgba(255,255,255,0.15)", borderRadius: "8px",
-            padding: "8px", minWidth: "180px",
-          }}>
-            <button
-              onClick={handleNewSelection}
-              style={{
-                ...btnStyle,
-                background: selectMode ? "rgba(220,50,50,0.4)" : "rgba(255,255,255,0.1)",
-                color: "white",
-              }}
-            >
-              {selectMode ? "Cancel Selection" : "Select Field"}
-            </button>
+        {selectMode && (
+          <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px", textAlign: "center", margin: 0 }}>
+            Click 4 points on the map
+          </p>
+        )}
 
-            {savedFields.length > 0 && (
-              <>
-                <div style={{
-                  borderTop: "1px solid rgba(255,255,255,0.1)",
-                  paddingTop: 8, marginTop: 4,
-                  color: "rgba(255,255,255,0.5)", fontSize: "11px",
-                  marginBottom: 6,
-                }}>
-                  SAVED FIELDS
-                </div>
-                {savedFields.map((field, index) => (
-                  <div
-                    key={index}
+        {savedFields.length > 0 && (
+          <>
+            <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px", letterSpacing: "0.1em", margin: "4px 0 0" }}>
+              SAVED FIELDS
+            </p>
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              {savedFields.map((field, index) => (
+                <div
+                  key={index}
+                  onClick={() => handleLoadField(index)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 5,
+                    padding: "5px 6px", borderRadius: "6px", marginBottom: 3,
+                    background: activeFieldIndex === index ? "rgba(255,255,255,0.1)" : "transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  {/* Visibility checkbox */}
+                  <input
+                    type="checkbox"
+                    checked={field.visible}
+                    onChange={() => {}}
+                    onClick={e => toggleVisibility(index, e)}
+                    style={{ cursor: "pointer", accentColor: getColor(field.et || 5), flexShrink: 0 }}
+                  />
+                  {/* Name */}
+                  <span style={{ color: "rgba(255,255,255,0.8)", fontSize: "11px", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {field.name ?? `Field ${index + 1}`}
+                  </span>
+                  {/* ET color dot */}
+                  <div style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: field.et > 0 ? getColor(field.et) : "rgba(255,255,255,0.2)" }} />
+                  {/* Delete */}
+                  <button
+                    onClick={e => handleDeleteField(index, e)}
+                    title="Delete field"
                     style={{
-                      display: "flex", alignItems: "center", gap: 8,
-                      padding: "6px 8px", borderRadius: "4px",
-                      background: activeFieldIndex === index ? "rgba(255,255,255,0.15)" : "transparent",
-                      marginBottom: 2,
+                      background: "none", border: "none", color: "rgba(255,80,80,0.6)",
+                      cursor: "pointer", fontSize: "13px", padding: "0 1px", lineHeight: 1, flexShrink: 0,
                     }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={field.visible}
-                      onChange={() => toggleVisibility(index)}
-                      style={{ cursor: "pointer", accentColor: getColor(field.et) }}
-                    />
-                    <span
-                      onClick={() => handleLoadField(index)}
-                      style={{
-                        color: "rgba(255,255,255,0.8)", fontSize: "12px",
-                        flex: 1, cursor: "pointer",
-                      }}
-                    >
-                      {field.name ?? `Field ${index + 1}`}
-                    </span>
-                    <div style={{
-                      width: 8, height: 8, borderRadius: "50%",
-                      background: field.et > 0 ? getColor(field.et) : "rgba(255,255,255,0.3)",
-                      flexShrink: 0,
-                    }} />
-                  </div>
-                ))}
-              </>
-            )}
+                  >×</button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        <button onClick={onBack} style={{ ...smallBtn, textAlign: "center", marginTop: "auto" }}>← Back</button>
+      </div>
+
+      {/* ── MAP ── */}
+      <div style={{ flex: 1, position: "relative" }}>
+        <MapContainer center={mapCenter} zoom={7} zoomControl={false} style={{ width: "100%", height: "100%" }}>
+          <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" attribution="Tiles © Esri" />
+          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="© OpenStreetMap contributors" opacity={0.4} />
+          <FlyToCountry center={mapCenter} />
+          {flyToPoints.length > 0 && <FlyToField points={flyToPoints} />}
+          {selectMode && <DrawPolygon onComplete={handleComplete} onPointAdded={() => showMessage("Point added")} />}
+          {savedFields.map((field, index) =>
+            field.visible ? (
+              <Polygon key={index} positions={field.points}
+                color={getColor(field.et || 5)} fillColor={getColor(field.et || 5)}
+                fillOpacity={field.grid ? 0 : 0.35} weight={2}
+                eventHandlers={{ click: () => handleLoadField(index) }}
+              />
+            ) : null
+          )}
+          {savedFields.map((field, index) =>
+            field.visible && field.grid ? <GridOverlay key={`grid-${index}`} field={field} /> : null
+          )}
+          <ZoomControlPortal />
+        </MapContainer>
+
+        {message && (
+          <div style={{
+            position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)",
+            zIndex: 1000, background: "rgba(0,0,0,0.65)", color: "rgba(255,255,255,0.9)",
+            padding: "6px 18px", borderRadius: "6px", fontSize: "12px", pointerEvents: "none",
+          }}>
+            {message}
           </div>
         )}
       </div>
 
-      {/* Analysis Result Card */}
+      {/* ── RIGHT PANEL ── */}
       {activeField && (
         <div style={{
-          position: "fixed", top: "50%", right: 16,
-          transform: "translateY(-50%)", zIndex: 999,
-          background: "rgba(0,0,0,0.75)", backdropFilter: "blur(10px)",
-          border: "1px solid rgba(255,255,255,0.15)", borderRadius: "12px",
-          padding: "20px", width: "220px", color: "white", fontSize: "13px",
-          maxHeight: "90vh", overflowY: "auto",
+          width: 255, minWidth: 255, height: "100vh",
+          background: "rgba(0,0,0,0.8)", backdropFilter: "blur(12px)",
+          borderLeft: "1px solid rgba(255,255,255,0.08)",
+          display: "flex", flexDirection: "column",
+          zIndex: 1000, boxSizing: "border-box", overflow: "hidden",
         }}>
-          <p style={{ fontWeight: 600, fontSize: "14px", marginBottom: 4, letterSpacing: "0.05em" }}>
-            {activeField.name ?? `Field ${activeFieldIndex! + 1}`}
-          </p>
-          <p style={{ opacity: 0.5, fontSize: "11px", marginBottom: 12 }}>Field Analysis</p>
+          {showPlantPicker ? (
+            /* ── PLANT PICKER ── */
+            <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: "14px 14px" }}>
+              <button onClick={() => { setShowPlantPicker(false); setCropSearch(""); }} style={{
+                background: "none", border: "none", color: "rgba(255,255,255,0.4)",
+                fontSize: "11px", cursor: "pointer", marginBottom: 10, padding: 0, textAlign: "left",
+              }}>← Back</button>
 
-          <div style={{ marginBottom: 8 }}>
-            <span style={{ opacity: 0.6, fontSize: "11px" }}>TOTAL AREA</span>
-            <p style={{ fontWeight: 500 }}>{activeField.area.toLocaleString()} m²</p>
-          </div>
+              <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px", letterSpacing: "0.1em", marginBottom: 8 }}>SELECT PLANT</p>
 
-          <div style={{ marginBottom: 8 }}>
-            <span style={{ opacity: 0.6, fontSize: "11px" }}>REFERENCE ET₀</span>
-            <p style={{ fontWeight: 500 }}>
-              {activeField.eto !== null ? `${activeField.eto} mm/day` : "—"}
-            </p>
-          </div>
+              {/* Search */}
+              <input
+                type="text"
+                placeholder="Search crops..."
+                value={cropSearch}
+                onChange={e => setCropSearch(e.target.value)}
+                style={{ ...inputStyle, marginBottom: 8 }}
+                autoFocus
+              />
 
-          <div style={{ marginBottom: 8 }}>
-            <span style={{ opacity: 0.6, fontSize: "11px" }}>IRRIGATION NEEDED</span>
-            <p style={{ fontWeight: 500 }}>
-              {activeField.et > 0 ? `${activeField.et} L/m²/day` : "—"}
-            </p>
-          </div>
+              {/* Plant list */}
+              <div style={{ flex: 1, overflowY: "auto" }}>
+                {filteredPlants.length === 0 && (
+                  <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "12px", textAlign: "center", marginTop: 20 }}>No crops found</p>
+                )}
+                {filteredPlants.map((plant) => {
+                  const originalIndex = plants.indexOf(plant);
+                  return (
+                    <button
+                      key={plant}
+                      onClick={() => { setSelectedPlantIndex(originalIndex); setShowPlantPicker(false); setCropSearch(""); }}
+                      style={{
+                        width: "100%", padding: "9px 12px", marginBottom: 5,
+                        borderRadius: "7px", border: "1px solid rgba(255,255,255,0.12)",
+                        background: selectedPlantIndex === originalIndex ? "rgba(80,160,80,0.25)" : "rgba(255,255,255,0.05)",
+                        color: "white", fontSize: "12px", cursor: "pointer", textAlign: "left",
+                      }}
+                    >
+                      {selectedPlantIndex === originalIndex ? "✓  " : ""}{plant}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            /* ── DETAILS ── */
+            <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: "14px 14px" }}>
 
-          <div style={{ marginBottom: 16 }}>
-            <span style={{ opacity: 0.6, fontSize: "11px" }}>TOTAL WATER NEEDED</span>
-            <p style={{ fontWeight: 500 }}>
-              {activeField.et > 0
-                ? `${Math.round(activeField.et * activeField.area).toLocaleString()} L/day`
-                : "—"}
-            </p>
-          </div>
+              {/* Header */}
+              <p style={{ fontWeight: 600, fontSize: "14px", color: "white", marginBottom: 1 }}>
+                {activeField.name ?? `Field ${activeFieldIndex! + 1}`}
+              </p>
+              <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px", marginBottom: 12 }}>Field Analysis</p>
 
-          {activeField.et > 0 && (
-            <div style={{
-              padding: "8px 12px", borderRadius: "6px",
-              background: getColor(activeField.et), color: "white",
-              fontSize: "11px", fontWeight: 600, textAlign: "center", marginBottom: 16,
-            }}>
-              {getLabel(activeField.et)}
+              {/* Stats — compact */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 10px", marginBottom: 10 }}>
+                {[
+                  { label: "AREA", value: `${activeField.area.toLocaleString()} m²` },
+                  { label: "ET₀", value: activeField.eto !== null ? `${activeField.eto} mm/d` : "—" },
+                  { label: "IRRIGATION", value: activeField.et > 0 ? `${activeField.et} L/m²` : "—" },
+                  { label: "TOTAL WATER", value: activeField.et > 0 ? `${Math.round(activeField.et * activeField.area).toLocaleString()} L` : "—" },
+                ].map(item => (
+                  <div key={item.label} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 6, padding: "7px 9px" }}>
+                    <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "9px", letterSpacing: "0.08em", marginBottom: 2 }}>{item.label}</p>
+                    <p style={{ color: "white", fontWeight: 500, fontSize: "12px" }}>{item.value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Status badge */}
+              {activeField.et > 0 && (
+                <div style={{
+                  padding: "6px 10px", borderRadius: "6px", marginBottom: 10,
+                  background: getColor(activeField.et), color: "white",
+                  fontSize: "10px", fontWeight: 600, textAlign: "center",
+                }}>
+                  {getLabel(activeField.et)}
+                </div>
+              )}
+
+              {/* Legend — horizontal compact */}
+              <div style={{ marginBottom: 10 }}>
+                <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "9px", letterSpacing: "0.08em", marginBottom: 5 }}>LEGEND</p>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {[
+                    { label: "0–3", color: "rgb(0,150,255)" },
+                    { label: "3–6", color: "rgb(50,150,0)" },
+                    { label: "6–9", color: "rgb(255,200,0)" },
+                    { label: "9–12", color: "rgb(255,80,0)" },
+                    { label: "12+", color: "rgb(255,0,0)" },
+                  ].map(item => (
+                    <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <div style={{ width: 10, height: 10, borderRadius: 2, background: item.color }} />
+                      <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.55)" }}>{item.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", marginBottom: 10 }} />
+
+              {/* Plant selector */}
+              <div
+                onClick={() => setShowPlantPicker(true)}
+                style={{
+                  padding: "9px 12px", borderRadius: "8px", marginBottom: 8,
+                  border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)",
+                  cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center",
+                }}
+              >
+                <div>
+                  <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "9px", letterSpacing: "0.08em", marginBottom: 2 }}>PLANT TYPE</p>
+                  <p style={{ color: "white", fontSize: "12px" }}>
+                    {selectedPlantIndex !== null ? plants[selectedPlantIndex] : "Select a plant →"}
+                  </p>
+                </div>
+                <span style={{ color: "rgba(255,255,255,0.3)", fontSize: "16px" }}>›</span>
+              </div>
+
+              {/* Buttons */}
+              <button onClick={handleCalculate} disabled={isCalculating} style={{
+                width: "100%", padding: "9px", borderRadius: "7px", marginBottom: 6,
+                border: "1px solid rgba(80,200,80,0.3)",
+                background: isCalculating ? "rgba(255,255,255,0.04)" : "rgba(60,140,60,0.35)",
+                color: isCalculating ? "rgba(255,255,255,0.3)" : "white",
+                fontSize: "12px", fontWeight: 600, cursor: isCalculating ? "not-allowed" : "pointer",
+              }}>
+                {isCalculating ? "Calculating..." : "Calculate"}
+              </button>
+
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={handleRenameField} style={{ ...smallBtn, flex: 1 }}>Rename</button>
+                <button
+                  onClick={() => { if (activeFieldIndex !== null) handleDeleteField(activeFieldIndex, { stopPropagation: () => {} } as any); }}
+                  style={{ ...smallBtn, flex: 1, color: "rgba(255,100,100,0.8)", border: "1px solid rgba(255,80,80,0.2)" }}
+                >
+                  Delete
+                </button>
+              </div>
+
+              <button onClick={() => setActiveFieldIndex(null)} style={{ ...smallBtn, marginTop: 6, textAlign: "center" }}>Close</button>
+
+              {/* L/m² unit note */}
+              <p style={{ color: "rgba(255,255,255,0.2)", fontSize: "9px", textAlign: "center", marginTop: "auto", paddingTop: 10 }}>
+                Legend values in L/m²/day
+              </p>
             </div>
           )}
-
-          <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 12, marginBottom: 16 }}>
-            <p style={{ opacity: 0.6, fontSize: "11px", marginBottom: 8 }}>LEGEND</p>
-            {[
-              { label: "0–3 L/m²", color: "rgb(0,150,255)" },
-              { label: "3–6 L/m²", color: "rgb(50,150,0)" },
-              { label: "6–9 L/m²", color: "rgb(255,200,0)" },
-              { label: "9–12 L/m²", color: "rgb(255,80,0)" },
-              { label: "12–15 L/m²", color: "rgb(255,0,0)" },
-            ].map((item) => (
-              <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <div style={{ width: 12, height: 12, borderRadius: 2, background: item.color, flexShrink: 0 }} />
-                <span style={{ fontSize: "11px", opacity: 0.8 }}>{item.label}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Plant selector */}
-          <div style={{ marginBottom: 16 }}>
-            <span style={{ opacity: 0.6, fontSize: "11px" }}>PLANT TYPE</span>
-            <select
-              value={selectedPlantIndex ?? ""}
-              onChange={(e) => setSelectedPlantIndex(Number(e.target.value))}
-              style={{
-                display: "block", width: "100%", marginTop: 4,
-                padding: "6px 8px", borderRadius: "6px",
-                border: "1px solid rgba(255,255,255,0.2)",
-                background: "rgba(255,255,255,0.05)", color: "white",
-                fontSize: "12px", cursor: "pointer",
-              }}
-            >
-              <option value="">-- Select plant --</option>
-              {plants.map((plant, index) => (
-                <option key={index} value={index} style={{ background: "#0d1420" }}>
-                  {plant}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <button
-            onClick={handleCalculate}
-            disabled={isCalculating}
-            style={{
-              ...btnStyle,
-              background: isCalculating ? "rgba(255,255,255,0.05)" : "rgba(80,160,80,0.3)",
-              color: isCalculating ? "rgba(255,255,255,0.4)" : "white",
-              border: "1px solid rgba(80,200,80,0.3)",
-              cursor: isCalculating ? "not-allowed" : "pointer",
-            }}
-          >
-            {isCalculating ? "Calculating..." : "Calculate"}
-          </button>
-
-          <button onClick={handleRenameField} style={btnStyle}>
-            Name Field
-          </button>
-
-          <button onClick={() => setActiveFieldIndex(null)} style={btnStyle}>
-            Close
-          </button>
         </div>
       )}
-
-      <button
-        style={{
-          position: "fixed", bottom: 24, right: 12, zIndex: 1000,
-          padding: "6px 14px", fontSize: "12px", fontWeight: 500,
-          borderRadius: "6px", border: "1px solid rgba(255,255,255,0.2)",
-          cursor: "pointer", background: "rgba(255,255,255,0.1)",
-          color: "rgba(255,255,255,0.8)",
-        }}
-        onClick={onBack}
-      >
-        Back
-      </button>
-    </>
+    </div>
   );
 }
 
