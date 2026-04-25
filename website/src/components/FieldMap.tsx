@@ -31,20 +31,18 @@ const countries = [
   { name: "Spain", lat: 40.4637, lng: 3.7492 },
 ];
 
-// Smooth continuous gradient: blue → green → yellow → orange → red
-// Each color stop is mapped to a value on the 0-15 scale
 function getColor(value: number): string {
   if (value === 0) return "rgba(255,255,255,0.3)";
 
   const stops = [
-    { v: 0,  r: 0,   g: 180, b: 255 }, // bright blue
-    { v: 3,  r: 0,   g: 100, b: 180 }, // dark blue
-    { v: 6,  r: 0,   g: 200, b: 0   }, // bright green
-    { v: 9,  r: 0,   g: 100, b: 0   }, // dark green
-    { v: 10, r: 255, g: 230, b: 0   }, // bright yellow
-    { v: 11, r: 255, g: 140, b: 0   }, // orange
-    { v: 12, r: 255, g: 60,  b: 0   }, // dark orange
-    { v: 15, r: 180, g: 0,   b: 0   }, // dark red
+    { v: 0,  r: 0,   g: 180, b: 255 },
+    { v: 3,  r: 0,   g: 100, b: 180 },
+    { v: 6,  r: 0,   g: 200, b: 0   },
+    { v: 9,  r: 0,   g: 100, b: 0   },
+    { v: 10, r: 255, g: 230, b: 0   },
+    { v: 11, r: 255, g: 140, b: 0   },
+    { v: 12, r: 255, g: 60,  b: 0   },
+    { v: 15, r: 180, g: 0,   b: 0   },
   ];
 
   const clamped = Math.max(0, Math.min(15, value));
@@ -54,10 +52,7 @@ function getColor(value: number): string {
     const b = stops[i + 1];
     if (clamped >= a.v && clamped <= b.v) {
       const t = (clamped - a.v) / (b.v - a.v);
-      const r = Math.round(a.r + t * (b.r - a.r));
-      const g = Math.round(a.g + t * (b.g - a.g));
-      const bl = Math.round(a.b + t * (b.b - a.b));
-      return `rgb(${r},${g},${bl})`;
+      return `rgb(${Math.round(a.r + t * (b.r - a.r))},${Math.round(a.g + t * (b.g - a.g))},${Math.round(a.b + t * (b.b - a.b))})`;
     }
   }
 
@@ -254,6 +249,7 @@ function FieldMap({ lat, lng, onBack }: Props) {
   const [mapCenter, setMapCenter] = useState<[number, number]>([lat, lng]);
   const [flyToPoints, setFlyToPoints] = useState<any[]>([]);
   const [isCalculating, setIsCalculating] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [plants, setPlants] = useState<string[]>([]);
   const [selectedPlantIndex, setSelectedPlantIndex] = useState<number | null>(null);
   const [showPlantPicker, setShowPlantPicker] = useState(false);
@@ -263,6 +259,9 @@ function FieldMap({ lat, lng, onBack }: Props) {
 
   const activeField = activeFieldIndex !== null ? savedFields[activeFieldIndex] : null;
   const filteredPlants = plants.filter(p => p.toLowerCase().includes(cropSearch.toLowerCase()));
+
+  // Whether the current active field has been calculated and can send data
+  const canSendData = activeField !== null && activeField.et > 0 && activeField.grid !== null && selectedPlantIndex !== null;
 
   useEffect(() => {
     fetch("http://localhost:5000/api/crops")
@@ -308,6 +307,52 @@ function FieldMap({ lat, lng, onBack }: Props) {
       showMessage("Error connecting to server");
     } finally {
       setIsCalculating(false);
+    }
+  };
+
+  const handleSendData = async () => {
+    if (!canSendData || !activeField || selectedPlantIndex === null) return;
+    setIsSending(true);
+    showMessage("Sending data...");
+    try {
+      const grid = activeField.grid!;
+      const rows = grid.length;
+      const cols = grid[0].length;
+      const cellArea = activeField.area / (rows * cols);
+
+      const lats = activeField.points.map((p: any) => p.lat);
+      const lngs = activeField.points.map((p: any) => p.lng);
+      const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+      const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+
+      const parcels = grid.flatMap((row, r) =>
+        row.map((value, c) => {
+          const cellLat = maxLat - ((r + 0.5) / rows) * (maxLat - minLat);
+          const cellLng = minLng + ((c + 0.5) / cols) * (maxLng - minLng);
+          return {
+            coordinates: `${cellLat.toFixed(6)},${cellLng.toFixed(6)}`,
+            potrebna_voda_l: Math.round(value * cellArea * 100) / 100,
+          };
+        })
+      );
+
+      const totalWater = calculateTotalWaterFromGrid(activeField) ?? Math.round(activeField.et * activeField.area);
+
+      await fetch("http://localhost:5000/api/getIsWatered", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kolicina_voda_l: totalWater,
+          tip_rastenie: plants[selectedPlantIndex],
+          parcels,
+        }),
+      });
+
+      showMessage("Data sent successfully!");
+    } catch {
+      showMessage("Error sending data");
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -536,6 +581,7 @@ function FieldMap({ lat, lng, onBack }: Props) {
               </p>
               <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px", marginBottom: 12 }}>Field Analysis</p>
 
+              {/* Stats grid */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 10px", marginBottom: 10 }}>
                 {[
                   { label: "AREA", value: `${activeField.area.toLocaleString()} m²` },
@@ -558,6 +604,7 @@ function FieldMap({ lat, lng, onBack }: Props) {
                 ))}
               </div>
 
+              {/* Status badge */}
               {activeField.et > 0 && (
                 <div style={{
                   padding: "6px 10px", borderRadius: "6px", marginBottom: 10,
@@ -568,6 +615,7 @@ function FieldMap({ lat, lng, onBack }: Props) {
                 </div>
               )}
 
+              {/* Legend */}
               <div style={{ marginBottom: 10 }}>
                 <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "9px", letterSpacing: "0.08em", marginBottom: 5 }}>LEGEND</p>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -588,6 +636,7 @@ function FieldMap({ lat, lng, onBack }: Props) {
 
               <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", marginBottom: 10 }} />
 
+              {/* Plant selector */}
               <div
                 onClick={() => setShowPlantPicker(true)}
                 style={{
@@ -605,6 +654,7 @@ function FieldMap({ lat, lng, onBack }: Props) {
                 <span style={{ color: "rgba(255,255,255,0.3)", fontSize: "16px" }}>›</span>
               </div>
 
+              {/* Calculate */}
               <button onClick={handleCalculate} disabled={isCalculating} style={{
                 width: "100%", padding: "9px", borderRadius: "7px", marginBottom: 6,
                 border: "1px solid rgba(80,200,80,0.3)",
@@ -615,6 +665,20 @@ function FieldMap({ lat, lng, onBack }: Props) {
                 {isCalculating ? "Calculating..." : "Calculate"}
               </button>
 
+              {/* Send Data — only visible after calculation */}
+              {canSendData && (
+                <button onClick={handleSendData} disabled={isSending} style={{
+                  width: "100%", padding: "9px", borderRadius: "7px", marginBottom: 6,
+                  border: "1px solid rgba(80,140,255,0.35)",
+                  background: isSending ? "rgba(255,255,255,0.04)" : "rgba(40,80,200,0.35)",
+                  color: isSending ? "rgba(255,255,255,0.3)" : "white",
+                  fontSize: "12px", fontWeight: 600, cursor: isSending ? "not-allowed" : "pointer",
+                }}>
+                  {isSending ? "Sending..." : "Send Data"}
+                </button>
+              )}
+
+              {/* Rename / Delete */}
               <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
                 <button onClick={handleRenameField} style={{ ...smallBtn, flex: 1 }}>Rename</button>
                 <button
@@ -627,24 +691,15 @@ function FieldMap({ lat, lng, onBack }: Props) {
 
               <button onClick={() => setActiveFieldIndex(null)} style={{ ...smallBtn, textAlign: "center" }}>Close</button>
 
+              {/* Grid toggles */}
               {activeField.grid && (
                 <div style={{ marginTop: 10, borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 10 }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={showGridLines}
-                      onChange={() => setShowGridLines(!showGridLines)}
-                      style={{ cursor: "pointer" }}
-                    />
+                    <input type="checkbox" checked={showGridLines} onChange={() => setShowGridLines(!showGridLines)} style={{ cursor: "pointer" }} />
                     <span style={{ color: "rgba(255,255,255,0.6)", fontSize: "11px" }}>Show grid lines</span>
                   </label>
                   <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={showCellColors}
-                      onChange={() => setShowCellColors(!showCellColors)}
-                      style={{ cursor: "pointer" }}
-                    />
+                    <input type="checkbox" checked={showCellColors} onChange={() => setShowCellColors(!showCellColors)} style={{ cursor: "pointer" }} />
                     <span style={{ color: "rgba(255,255,255,0.6)", fontSize: "11px" }}>Show cell colors</span>
                   </label>
                 </div>
