@@ -32,7 +32,7 @@ const countries = [
 ];
 
 function getColor(value: number): string {
-  if (value ===0) return "rgba(255,255,255,0.3)";
+  if (value === 0) return "rgba(255,255,255,0.3)";
   if (value <= 3) {
     const t = value / 3;
     return `rgb(0,${Math.round(100 + t * 50)},${Math.round(255 - t * 100)})`;
@@ -69,6 +69,24 @@ function getLabel(value: number): string {
   if (value <= 9) return "Moderate irrigation needed";
   if (value <= 12) return "High irrigation needed";
   return "Urgent irrigation needed";
+}
+
+function calculateTotalWaterFromGrid(field: Field): number | null {
+  if (!field.grid || field.grid.length === 0) return null;
+  const rows = field.grid.length;
+  const cols = field.grid[0].length;
+  const cellArea = field.area / (rows * cols);
+  let total = 0;
+  let count = 0;
+  for (const row of field.grid) {
+    for (const val of row) {
+      if (val !== null && val > 0) {
+        total += val * cellArea;
+        count++;
+      }
+    }
+  }
+  return count > 0 ? Math.round(total) : null;
 }
 
 function FlyToField({ points }: { points: any[] }) {
@@ -110,7 +128,14 @@ function DrawPolygon({ onComplete, onPointAdded }: { onComplete: (points: any[])
     </>
   );
 }
-function GridOverlay({ field }: { field: Field }) {
+
+function GridOverlay({ field, showGridLines, showCellColors }: {
+  field: Field;
+  showGridLines: boolean;
+  showCellColors: boolean;
+}) {
+  const [hoveredCell, setHoveredCell] = useState<{ value: number; x: number; y: number } | null>(null);
+
   if (!field.grid || field.grid.length === 0) return null;
 
   const lats = field.points.map((p: any) => p.lat);
@@ -119,7 +144,6 @@ function GridOverlay({ field }: { field: Field }) {
   const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
   const rows = field.grid.length, cols = field.grid[0].length;
 
-  // Point in polygon check using ray casting
   function pointInPolygon(lat: number, lng: number, polygon: any[]): boolean {
     let inside = false;
     for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -138,8 +162,6 @@ function GridOverlay({ field }: { field: Field }) {
         row.map((value, c) => {
           const cellCenterLat = maxLat - ((r + 0.5) / rows) * (maxLat - minLat);
           const cellCenterLng = minLng + ((c + 0.5) / cols) * (maxLng - minLng);
-
-          // Only draw if cell center is inside the polygon
           if (!pointInPolygon(cellCenterLat, cellCenterLng, field.points)) return null;
 
           return (
@@ -150,14 +172,44 @@ function GridOverlay({ field }: { field: Field }) {
                 [maxLat - ((r + 1) / rows) * (maxLat - minLat), minLng + ((c + 1) / cols) * (maxLng - minLng)],
               ]}
               pathOptions={{
-                color: "transparent",
-                fillColor: getColor(value),
-                fillOpacity: 0.65,
-                weight: 0
+                color: showGridLines ? "rgba(255,255,255,0.4)" : "transparent",
+                weight: showGridLines ? 0.5 : 0,
+                fillColor: showCellColors ? getColor(value) : "transparent",
+                fillOpacity: showCellColors ? 0.65 : 0,
+              }}
+              eventHandlers={{
+                mouseover: (e) => {
+                  const { clientX, clientY } = e.originalEvent;
+                  setHoveredCell({ value, x: clientX, y: clientY });
+                },
+                mousemove: (e) => {
+                  const { clientX, clientY } = e.originalEvent;
+                  setHoveredCell(prev => prev ? { ...prev, x: clientX, y: clientY } : null);
+                },
+                mouseout: () => setHoveredCell(null),
               }}
             />
           );
         })
+      )}
+
+      {hoveredCell && (
+        <div style={{
+          position: "fixed",
+          left: hoveredCell.x + 12,
+          top: hoveredCell.y - 28,
+          zIndex: 2000,
+          background: "rgba(0,0,0,0.75)",
+          color: "white",
+          padding: "4px 10px",
+          borderRadius: "5px",
+          fontSize: "11px",
+          pointerEvents: "none",
+          backdropFilter: "blur(6px)",
+          border: "1px solid rgba(255,255,255,0.15)",
+        }}>
+          {hoveredCell.value.toFixed(2)} L/m²
+        </div>
       )}
     </>
   );
@@ -192,6 +244,8 @@ function FieldMap({ lat, lng, onBack }: Props) {
   const [selectedPlantIndex, setSelectedPlantIndex] = useState<number | null>(null);
   const [showPlantPicker, setShowPlantPicker] = useState(false);
   const [cropSearch, setCropSearch] = useState("");
+  const [showGridLines, setShowGridLines] = useState(false);
+  const [showCellColors, setShowCellColors] = useState(false);
 
   const activeField = activeFieldIndex !== null ? savedFields[activeFieldIndex] : null;
   const filteredPlants = plants.filter(p => p.toLowerCase().includes(cropSearch.toLowerCase()));
@@ -293,7 +347,7 @@ function FieldMap({ lat, lng, onBack }: Props) {
   return (
     <div style={{ display: "flex", width: "100vw", height: "100vh", background: "#0d1420", overflow: "hidden" }}>
 
-      {/* ── LEFT SIDEBAR ── */}
+      {/* LEFT SIDEBAR */}
       <div style={{
         width: 160, minWidth: 160, height: "100vh",
         background: "rgba(0,0,0,0.8)", backdropFilter: "blur(12px)",
@@ -341,7 +395,6 @@ function FieldMap({ lat, lng, onBack }: Props) {
                     cursor: "pointer",
                   }}
                 >
-                  {/* Visibility checkbox */}
                   <input
                     type="checkbox"
                     checked={field.visible}
@@ -349,20 +402,13 @@ function FieldMap({ lat, lng, onBack }: Props) {
                     onClick={e => toggleVisibility(index, e)}
                     style={{ cursor: "pointer", accentColor: getColor(field.et || 5), flexShrink: 0 }}
                   />
-                  {/* Name */}
                   <span style={{ color: "rgba(255,255,255,0.8)", fontSize: "11px", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {field.name ?? `Field ${index + 1}`}
                   </span>
-                  {/* ET color dot */}
                   <div style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: field.et > 0 ? getColor(field.et) : "rgba(255,255,255,0.2)" }} />
-                  {/* Delete */}
                   <button
                     onClick={e => handleDeleteField(index, e)}
-                    title="Delete field"
-                    style={{
-                      background: "none", border: "none", color: "rgba(255,80,80,0.6)",
-                      cursor: "pointer", fontSize: "13px", padding: "0 1px", lineHeight: 1, flexShrink: 0,
-                    }}
+                    style={{ background: "none", border: "none", color: "rgba(255,80,80,0.6)", cursor: "pointer", fontSize: "13px", padding: "0 1px", lineHeight: 1, flexShrink: 0 }}
                   >×</button>
                 </div>
               ))}
@@ -373,7 +419,7 @@ function FieldMap({ lat, lng, onBack }: Props) {
         <button onClick={onBack} style={{ ...smallBtn, textAlign: "center", marginTop: "auto" }}>← Back</button>
       </div>
 
-      {/* ── MAP ── */}
+      {/* MAP */}
       <div style={{ flex: 1, position: "relative" }}>
         <MapContainer center={mapCenter} zoom={7} zoomControl={false} style={{ width: "100%", height: "100%" }}>
           <TileLayer url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" attribution="Tiles © Esri" />
@@ -383,16 +429,26 @@ function FieldMap({ lat, lng, onBack }: Props) {
           {selectMode && <DrawPolygon onComplete={handleComplete} onPointAdded={() => showMessage("Point added")} />}
           {savedFields.map((field, index) =>
             field.visible ? (
-              <Polygon key={index} positions={field.points}
-              color={activeFieldIndex === index ? "white" : getColor(field.et)}
-fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
-                fillOpacity={field.grid ? 0 : 0.35} weight={2}
+              <Polygon
+                key={index}
+                positions={field.points}
+                color={activeFieldIndex === index ? "white" : getColor(field.et)}
+                fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
+                fillOpacity={field.grid && showCellColors ? 0 : 0.35}
+                weight={2}
                 eventHandlers={{ click: () => handleLoadField(index) }}
               />
             ) : null
           )}
           {savedFields.map((field, index) =>
-            field.visible && field.grid ? <GridOverlay key={`grid-${index}`} field={field} /> : null
+            field.visible && field.grid && (showGridLines || showCellColors) ? (
+              <GridOverlay
+                key={`grid-${index}`}
+                field={field}
+                showGridLines={showGridLines}
+                showCellColors={showCellColors}
+              />
+            ) : null
           )}
           <ZoomControlPortal />
         </MapContainer>
@@ -408,7 +464,7 @@ fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
         )}
       </div>
 
-      {/* ── RIGHT PANEL ── */}
+      {/* RIGHT PANEL */}
       {activeField && (
         <div style={{
           width: 255, minWidth: 255, height: "100vh",
@@ -418,7 +474,6 @@ fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
           zIndex: 1000, boxSizing: "border-box", overflow: "hidden",
         }}>
           {showPlantPicker ? (
-            /* ── PLANT PICKER ── */
             <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: "14px 14px" }}>
               <button onClick={() => { setShowPlantPicker(false); setCropSearch(""); }} style={{
                 background: "none", border: "none", color: "rgba(255,255,255,0.4)",
@@ -427,7 +482,6 @@ fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
 
               <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px", letterSpacing: "0.1em", marginBottom: 8 }}>SELECT PLANT</p>
 
-              {/* Search */}
               <input
                 type="text"
                 placeholder="Search crops..."
@@ -437,7 +491,6 @@ fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
                 autoFocus
               />
 
-              {/* Plant list */}
               <div style={{ flex: 1, overflowY: "auto" }}>
                 {filteredPlants.length === 0 && (
                   <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "12px", textAlign: "center", marginTop: 20 }}>No crops found</p>
@@ -462,22 +515,27 @@ fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
               </div>
             </div>
           ) : (
-            /* ── DETAILS ── */
-            <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: "14px 14px" }}>
+            <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: "14px 14px", overflowY: "auto" }}>
 
-              {/* Header */}
               <p style={{ fontWeight: 600, fontSize: "14px", color: "white", marginBottom: 1 }}>
                 {activeField.name ?? `Field ${activeFieldIndex! + 1}`}
               </p>
               <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "10px", marginBottom: 12 }}>Field Analysis</p>
 
-              {/* Stats — compact */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 10px", marginBottom: 10 }}>
                 {[
                   { label: "AREA", value: `${activeField.area.toLocaleString()} m²` },
                   { label: "ET₀", value: activeField.eto !== null ? `${activeField.eto} mm/d` : "—" },
                   { label: "IRRIGATION", value: activeField.et > 0 ? `${activeField.et} L/m²` : "—" },
-                  { label: "TOTAL WATER", value: activeField.et > 0 ? `${Math.round(activeField.et * activeField.area).toLocaleString()} L` : "—" },
+                  {
+                    label: "TOTAL WATER",
+                    value: (() => {
+                      const gridTotal = calculateTotalWaterFromGrid(activeField);
+                      if (gridTotal !== null) return `${gridTotal.toLocaleString()} L`;
+                      if (activeField.et > 0) return `${Math.round(activeField.et * activeField.area).toLocaleString()} L`;
+                      return "—";
+                    })()
+                  },
                 ].map(item => (
                   <div key={item.label} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 6, padding: "7px 9px" }}>
                     <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "9px", letterSpacing: "0.08em", marginBottom: 2 }}>{item.label}</p>
@@ -486,7 +544,6 @@ fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
                 ))}
               </div>
 
-              {/* Status badge */}
               {activeField.et > 0 && (
                 <div style={{
                   padding: "6px 10px", borderRadius: "6px", marginBottom: 10,
@@ -497,7 +554,6 @@ fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
                 </div>
               )}
 
-              {/* Legend — horizontal compact */}
               <div style={{ marginBottom: 10 }}>
                 <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "9px", letterSpacing: "0.08em", marginBottom: 5 }}>LEGEND</p>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -518,7 +574,6 @@ fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
 
               <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", marginBottom: 10 }} />
 
-              {/* Plant selector */}
               <div
                 onClick={() => setShowPlantPicker(true)}
                 style={{
@@ -536,7 +591,6 @@ fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
                 <span style={{ color: "rgba(255,255,255,0.3)", fontSize: "16px" }}>›</span>
               </div>
 
-              {/* Buttons */}
               <button onClick={handleCalculate} disabled={isCalculating} style={{
                 width: "100%", padding: "9px", borderRadius: "7px", marginBottom: 6,
                 border: "1px solid rgba(80,200,80,0.3)",
@@ -547,7 +601,7 @@ fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
                 {isCalculating ? "Calculating..." : "Calculate"}
               </button>
 
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
                 <button onClick={handleRenameField} style={{ ...smallBtn, flex: 1 }}>Rename</button>
                 <button
                   onClick={() => { if (activeFieldIndex !== null) handleDeleteField(activeFieldIndex, { stopPropagation: () => {} } as any); }}
@@ -557,9 +611,32 @@ fillColor={activeFieldIndex === index ? "white" : getColor(field.et)}
                 </button>
               </div>
 
-              <button onClick={() => setActiveFieldIndex(null)} style={{ ...smallBtn, marginTop: 6, textAlign: "center" }}>Close</button>
+              <button onClick={() => setActiveFieldIndex(null)} style={{ ...smallBtn, textAlign: "center" }}>Close</button>
 
-              {/* L/m² unit note */}
+              {/* Grid toggles — only show when grid data exists */}
+              {activeField.grid && (
+                <div style={{ marginTop: 10, borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 10 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={showGridLines}
+                      onChange={() => setShowGridLines(!showGridLines)}
+                      style={{ cursor: "pointer" }}
+                    />
+                    <span style={{ color: "rgba(255,255,255,0.6)", fontSize: "11px" }}>Show grid lines</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={showCellColors}
+                      onChange={() => setShowCellColors(!showCellColors)}
+                      style={{ cursor: "pointer" }}
+                    />
+                    <span style={{ color: "rgba(255,255,255,0.6)", fontSize: "11px" }}>Show cell colors</span>
+                  </label>
+                </div>
+              )}
+
               <p style={{ color: "rgba(255,255,255,0.2)", fontSize: "9px", textAlign: "center", marginTop: "auto", paddingTop: 10 }}>
                 Legend values in L/m²/day
               </p>
