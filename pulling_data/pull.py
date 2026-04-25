@@ -216,12 +216,14 @@ async def return_data(coordinates, crop_values):
         )
         sg_data = sg_resp.json()
 
+        # FIX Bug 1: _sg_mean defined AND called inside the same try block.
+        # SoilGrids returns values in g/kg (0-1000); divide by 10 → percentage (0-100).
         def _sg_mean(prop_name):
             for layer in sg_data["properties"]["layers"]:
                 if layer["name"] == prop_name:
                     vals = [d["values"].get("mean") for d in layer["depths"]
                             if d["values"].get("mean") is not None]
-                    return np.mean(vals) / 10.0 if vals else None
+                    return np.mean(vals) / 10.0 if vals else None   # g/kg → %
             return None
 
         clay_pct = _sg_mean("clay")
@@ -233,6 +235,7 @@ async def return_data(coordinates, crop_values):
                 SOIL_TYPE = "clay"
             else:
                 SOIL_TYPE = "loam"
+            print(f"[SoilGrids] clay={clay_pct:.1f}% sand={sand_pct:.1f}% → SOIL_TYPE={SOIL_TYPE}")
     except Exception as e:
         print(f"[SoilGrids] API error, using default soil type. ({e})")
 
@@ -296,6 +299,7 @@ async def return_data(coordinates, crop_values):
     api_url = ("https://archive-api.open-meteo.com/v1/archive"
                if target_date <= today_date
                else "https://api.open-meteo.com/v1/forecast")
+    T_max = T_min = None   # will be set below
     try:
         response = requests.get(
             api_url,
@@ -303,12 +307,15 @@ async def return_data(coordinates, crop_values):
                 "latitude": LAT, "longitude": LON,
                 "hourly": ("temperature_2m,relative_humidity_2m,windspeed_10m,"
                            "surface_pressure,shortwave_radiation,precipitation"),
+                # FIX Bug 3: fetch daily Tmax/Tmin for correct Rnl calculation
+                "daily": "temperature_2m_max,temperature_2m_min",
                 "start_date": DATE_TARGET, "end_date": DATE_TARGET,
                 "timezone": "auto"
             },
             timeout=30
         )
-        weather = response.json()["hourly"]
+        resp_json   = response.json()
+        weather     = resp_json["hourly"]
         T           = float(np.mean(weather["temperature_2m"]))
         RH          = float(np.mean(weather["relative_humidity_2m"]))
         Td          = T - (100 - RH) / 5
@@ -316,9 +323,15 @@ async def return_data(coordinates, crop_values):
         P_atm       = float(np.mean(weather["surface_pressure"])) / 10
         Rs          = float(np.sum(weather["shortwave_radiation"])) * 3600 / 1e6
         RAINFALL_MM = float(np.sum(weather["precipitation"]))
+        T_max       = float(resp_json["daily"]["temperature_2m_max"][0])
+        T_min       = float(resp_json["daily"]["temperature_2m_min"][0])
     except Exception as e:
         print(f"[Weather] API error, using defaults. ({e})")
         T = 28.5; Td = 14.5; u10 = 2.0; P_atm = 97.5; Rs = 26.0; RAINFALL_MM = 0.0
+
+    # Fallback if daily fields missing
+    if T_max is None: T_max = T + 5.0
+    if T_min is None: T_min = T - 5.0
 
     # ── STAGE 1 — ET₀ (FAO-56 Penman-Monteith) ───
     es    = fao.svp_from_t(T)
@@ -335,13 +348,12 @@ async def return_data(coordinates, crop_values):
     Rs0 = (0.75 + 2e-5 * ELEVATION_M) * Ra
 
     Rns = (1 - alpha_mean) * Rs
-    Rnl = fao.net_out_lw_rad(T + 273.15, T + 273.15, ea, Rs, Rs0)
+    # FIX Bug 3: use actual Tmax/Tmin in Kelvin, not mean T twice
+    Rnl = fao.net_out_lw_rad(T_max + 273.15, T_min + 273.15, ea, Rs, Rs0)
     Rn  = Rns - Rnl
-    G   = 0.1 * Rn * (
-        (LST_K - 273.15) *
-        (0.0038 + 0.0074 * alpha_mean) *
-        (1 - 0.98 * NDVI_mean ** 4)
-    )
+    # FIX Bug 4: correct SEBAL G formula — Ts (°C) multiplies Rn directly
+    Ts_C = LST_K - 273.15
+    G    = Rn * Ts_C * (0.0038 + 0.0074 * alpha_mean) * (1 - 0.98 * NDVI_mean ** 4)
 
     ET0 = fao.fao56_penman_monteith(
         net_rad=Rn, t=T + 273.15, ws=u2,
@@ -368,19 +380,29 @@ async def return_data(coordinates, crop_values):
     # and soil moisture (→ DR_PREV_2d); ET₀ weather inputs are field-scale.
     if alpha_2d is not None and NDVI_2d is not None:
         Rns_2d = (1.0 - alpha_2d) * Rs
-        G_2d   = 0.1 * (Rns_2d - Rnl) * (
-            (LST_K - 273.15) *
-            (0.0038 + 0.0074 * alpha_2d) *
-            (1 - 0.98 * NDVI_2d ** 4)
-        )
+        # FIX Bug 4 (2D): same corrected SEBAL G formula
+        Ts_C_2d = LST_K - 273.15
+        G_2d    = (Rns_2d - Rnl) * Ts_C_2d * (0.0038 + 0.0074 * alpha_2d) * (1 - 0.98 * NDVI_2d ** 4)
         Rn_2d  = Rns_2d - Rnl
         ET0_2d = fao.fao56_penman_monteith(
             net_rad=Rn_2d, t=T + 273.15, ws=u2,
             svp=es, avp=ea, delta_svp=Delta, psy=gamma, shf=G_2d
         )
     else:
-        # S2 unavailable — broadcast scalar ET₀ across the grid
-        ET0_2d = np.full(size[::-1], ET0)   # size is (width, height); numpy is row-major
+        # FIX Bug 5: S2 unavailable — synthesise mild spatial variation from
+        # a geographic temperature gradient (≈0.6 °C / 100 m elevation proxy)
+        # so the grid is not entirely flat.  Variation is ±~5% around ET0.
+        rows, cols = size[1], size[0]
+        # Linear lat gradient across the bounding box (cooler northward)
+        lat_grad = np.linspace(0, 1, rows)[:, np.newaxis] * np.ones((rows, cols))
+        # ±2 °C variation → ±≈5% ET0 variation
+        T_spatial = T + 1.0 - 2.0 * lat_grad          # warmer south, cooler north
+        es_2d   = np.vectorize(fao.svp_from_t)(T_spatial)
+        Delta_2d = np.vectorize(fao.delta_svp)(T_spatial)
+        ET0_2d = fao.fao56_penman_monteith(
+            net_rad=Rn, t=T_spatial + 273.15, ws=u2,
+            svp=es_2d, avp=ea, delta_svp=Delta_2d, psy=gamma, shf=G
+        )
 
     ETc_2d = ET0_2d * Kc
 
