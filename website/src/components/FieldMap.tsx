@@ -356,7 +356,8 @@ function FieldMap({ lat, lng, onBack }: Props) {
           {savedFields.map((field, index) =>
             field.visible ? (
               <Polygon key={index} positions={field.points}
-                color={getColor(field.et || 5)} fillColor={getColor(field.et || 5)}
+              color={activeFieldIndex === index ? "white" : (field.et >= 4 && field.et <= 6 ? "green" : getColor(field.et || 5))}
+              fillColor={activeFieldIndex === index ? "white" : (field.et >= 4 && field.et <= 6 ? "green" : getColor(field.et || 5))}
                 fillOpacity={field.grid ? 0 : 0.35} weight={2}
                 eventHandlers={{ click: () => handleLoadField(index) }}
               />

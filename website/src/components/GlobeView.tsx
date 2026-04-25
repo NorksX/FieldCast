@@ -32,17 +32,34 @@ function GlobeView({ onSelectCountry }: Props) {
     const handleKeyDown = (e: KeyboardEvent) => {
       const currentPov = globeInstanceRef.current.pointOfView();
       if (e.key === '+' || e.key === '=') {
-        globeInstanceRef.current.pointOfView({ ...currentPov, altitude: currentPov.altitude - 0.2 }, 300);
+        globeInstanceRef.current.pointOfView(
+          { ...currentPov, altitude: currentPov.altitude - 0.2 },
+          300
+        );
       }
       if (e.key === '-') {
-        globeInstanceRef.current.pointOfView({ ...currentPov, altitude: currentPov.altitude + 0.2 }, 300);
+        globeInstanceRef.current.pointOfView(
+          { ...currentPov, altitude: currentPov.altitude + 0.2 },
+          300
+        );
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
+    // ✅ FIX: handle resize
+    const handleResize = () => {
+      if (!globeContainerRef.current || !globeInstanceRef.current) return;
+
+      globeInstanceRef.current
+        .width(globeContainerRef.current.offsetWidth)
+        .height(globeContainerRef.current.offsetHeight);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", handleResize);
 
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", handleResize); // ✅ cleanup
       if (globeContainerRef.current) {
         globeContainerRef.current.replaceChildren();
       }
@@ -51,7 +68,6 @@ function GlobeView({ onSelectCountry }: Props) {
 
   const handleSelectCountry = (lat: number, lng: number) => {
     if (globeInstanceRef.current) {
-      // Zoom in more on country
       globeInstanceRef.current.pointOfView({ lat, lng, altitude: 0.3 }, 2000);
       setTimeout(() => {
         onSelectCountryRef.current(lat, lng);
