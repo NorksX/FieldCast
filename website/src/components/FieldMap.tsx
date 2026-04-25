@@ -31,23 +31,37 @@ const countries = [
   { name: "Spain", lat: 40.4637, lng: 3.7492 },
 ];
 
+// Smooth continuous gradient: blue → green → yellow → orange → red
+// Each color stop is mapped to a value on the 0-15 scale
 function getColor(value: number): string {
   if (value === 0) return "rgba(255,255,255,0.3)";
-  if (value <= 3) {
-    const t = value / 3;
-    return `rgb(0,${Math.round(100 + t * 50)},${Math.round(255 - t * 100)})`;
-  } else if (value <= 6) {
-    const t = (value - 3) / 3;
-    return `rgb(${Math.round(t * 50)},${Math.round(200 - t * 50)},0)`;
-  } else if (value <= 9) {
-    const t = (value - 6) / 3;
-    return `rgb(255,${Math.round(255 - t * 100)},0)`;
-  } else if (value <= 12) {
-    const t = (value - 9) / 3;
-    return `rgb(255,${Math.round(165 - t * 100)},0)`;
-  } else {
-    return `rgb(255,0,0)`;
+
+  const stops = [
+    { v: 0,  r: 0,   g: 180, b: 255 }, // bright blue
+    { v: 3,  r: 0,   g: 100, b: 180 }, // dark blue
+    { v: 6,  r: 0,   g: 200, b: 0   }, // bright green
+    { v: 9,  r: 0,   g: 100, b: 0   }, // dark green
+    { v: 10, r: 255, g: 230, b: 0   }, // bright yellow
+    { v: 11, r: 255, g: 140, b: 0   }, // orange
+    { v: 12, r: 255, g: 60,  b: 0   }, // dark orange
+    { v: 15, r: 180, g: 0,   b: 0   }, // dark red
+  ];
+
+  const clamped = Math.max(0, Math.min(15, value));
+
+  for (let i = 0; i < stops.length - 1; i++) {
+    const a = stops[i];
+    const b = stops[i + 1];
+    if (clamped >= a.v && clamped <= b.v) {
+      const t = (clamped - a.v) / (b.v - a.v);
+      const r = Math.round(a.r + t * (b.r - a.r));
+      const g = Math.round(a.g + t * (b.g - a.g));
+      const bl = Math.round(a.b + t * (b.b - a.b));
+      return `rgb(${r},${g},${bl})`;
+    }
   }
+
+  return `rgb(180,0,0)`;
 }
 
 function calculateArea(points: any[]): number {
@@ -175,7 +189,7 @@ function GridOverlay({ field, showGridLines, showCellColors }: {
                 color: showGridLines ? "rgba(255,255,255,0.4)" : "transparent",
                 weight: showGridLines ? 0.5 : 0,
                 fillColor: showCellColors ? getColor(value) : "transparent",
-                fillOpacity: showCellColors ? 0.65 : 0,
+                fillOpacity: showCellColors ? 0.75 : 0,
               }}
               eventHandlers={{
                 mouseover: (e) => {
@@ -508,7 +522,7 @@ function FieldMap({ lat, lng, onBack }: Props) {
                         color: "white", fontSize: "12px", cursor: "pointer", textAlign: "left",
                       }}
                     >
-                      {selectedPlantIndex === originalIndex ? "✓  " : ""}{plant}
+                      {plant}
                     </button>
                   );
                 })}
@@ -558,11 +572,11 @@ function FieldMap({ lat, lng, onBack }: Props) {
                 <p style={{ color: "rgba(255,255,255,0.3)", fontSize: "9px", letterSpacing: "0.08em", marginBottom: 5 }}>LEGEND</p>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                   {[
-                    { label: "0–3", color: "rgb(0,150,255)" },
-                    { label: "3–6", color: "rgb(50,150,0)" },
-                    { label: "6–9", color: "rgb(255,200,0)" },
-                    { label: "9–12", color: "rgb(255,80,0)" },
-                    { label: "12+", color: "rgb(255,0,0)" },
+                    { label: "0–3", color: getColor(1.5) },
+                    { label: "3–6", color: getColor(4.5) },
+                    { label: "6–9", color: getColor(7.5) },
+                    { label: "9–12", color: getColor(10.5) },
+                    { label: "12+", color: getColor(14) },
                   ].map(item => (
                     <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <div style={{ width: 10, height: 10, borderRadius: 2, background: item.color }} />
@@ -613,7 +627,6 @@ function FieldMap({ lat, lng, onBack }: Props) {
 
               <button onClick={() => setActiveFieldIndex(null)} style={{ ...smallBtn, textAlign: "center" }}>Close</button>
 
-              {/* Grid toggles — only show when grid data exists */}
               {activeField.grid && (
                 <div style={{ marginTop: 10, borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 10 }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer" }}>
