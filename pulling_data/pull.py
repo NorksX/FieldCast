@@ -47,6 +47,9 @@ SENTINEL3_CDSE = DataCollection.SENTINEL3_SLSTR.define_from(
 # ─────────────────────────────────────────────
 # CUSTOM INPUT AREA + DATE
 # ─────────────────────────────────────────────
+def return_data():
+    pass
+
 
 def parse_input(raw_json: str) -> tuple[list[dict], str, list[float]]:
     """Return (coordinates, crop_name, kc_list) from frontend JSON.
@@ -716,3 +719,4 @@ df = pd.DataFrame([
 ])
 
 print(df.to_string(index=False))
+
