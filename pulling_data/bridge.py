@@ -19,7 +19,7 @@ crop_mapping = {
 
 
 @app.route('/api/crops', methods=['GET'])
-def get_crops():
+async def get_crops():
     crop_list = list(crop_mapping.keys())
     return jsonify({
         'status': 'success',
@@ -38,7 +38,7 @@ async def calculate():
     crop_string = crop_list[crop_index]
     crop_values = crop_mapping[crop_string]
 
-    results = await return_data(coordinates, crop_values)  # If bbox_from_coordinates is async
+    results = await return_data(coordinates, crop_values)
 
     return jsonify({
         'status': 'success',

@@ -1,5 +1,6 @@
+import asyncio
 import math
-import requests
+import httpx
 import numpy as np
 import pandas as pd
 import pyeto.fao as fao
@@ -136,7 +137,7 @@ async def return_data(coordinates, crop_values):
                 responses=[SentinelHubRequest.output_response("default", MimeType.TIFF)],
                 bbox=BBOX, size=size, config=config
             )
-            s2_data = req.get_data()[0]
+            s2_data = (await asyncio.to_thread(req.get_data))[0]
             B02 = s2_data[:, :, 0]; B04 = s2_data[:, :, 1]
             B08 = s2_data[:, :, 2]; B11 = s2_data[:, :, 3]; B12 = s2_data[:, :, 4]
 
@@ -187,7 +188,7 @@ async def return_data(coordinates, crop_values):
                 input_data=[SentinelHubStatistical.input_data(SENTINEL2_CDSE, maxcc=0.3)],
                 geometry=geometry, config=config
             )
-            ts_data = stat_request.get_data()[0]
+            ts_data = (await asyncio.to_thread(stat_request.get_data))[0]
             ndvi_series = []
             for interval in ts_data.get("data", []):
                 val = interval.get("outputs", {}).get("default", {}).get("bands", {}).get("B0", {}).get("stats", {}).get("mean")
@@ -208,12 +209,13 @@ async def return_data(coordinates, crop_values):
 
     # ── SOIL TYPE — SoilGrids ─────────────────────
     try:
-        sg_resp = requests.get(
-            "https://rest.isric.org/soilgrids/v2.0/properties/query",
-            params={"lon": LON, "lat": LAT, "property": ["clay", "sand"],
-                    "depth": ["0-5cm", "5-15cm", "15-30cm"], "value": "mean"},
-            timeout=20
-        )
+        async with httpx.AsyncClient() as client:
+            sg_resp = await client.get(
+                "https://rest.isric.org/soilgrids/v2.0/properties/query",
+                params={"lon": LON, "lat": LAT, "property": ["clay", "sand"],
+                        "depth": ["0-5cm", "5-15cm", "15-30cm"], "value": "mean"},
+                timeout=20
+            )
         sg_data = sg_resp.json()
 
         # FIX Bug 1: _sg_mean defined AND called inside the same try block.
@@ -259,7 +261,7 @@ async def return_data(coordinates, crop_values):
                 responses=[SentinelHubRequest.output_response("default", MimeType.TIFF)],
                 bbox=BBOX, size=(50, 50), config=config
             )
-            LST_K = float(np.nanmean(req.get_data()[0][:, :, 0]))
+            LST_K = float(np.nanmean((await asyncio.to_thread(req.get_data))[0][:, :, 0]))
         except Exception as e:
             print(f"[S3] No LST data, using default. ({e})")
 
@@ -285,7 +287,7 @@ async def return_data(coordinates, crop_values):
                 responses=[SentinelHubRequest.output_response("default", MimeType.TIFF)],
                 bbox=BBOX, size=(50, 50), config=config
             )
-            s1_data = req.get_data()[0]
+            s1_data = (await asyncio.to_thread(req.get_data))[0]
             VV = s1_data[:, :, 0]
             VV_dry, VV_sat = 0.01, 0.32
             SM_2d       = np.clip((VV - VV_dry) / (VV_sat - VV_dry), 0, 1)
@@ -301,19 +303,20 @@ async def return_data(coordinates, crop_values):
                else "https://api.open-meteo.com/v1/forecast")
     T_max = T_min = None   # will be set below
     try:
-        response = requests.get(
-            api_url,
-            params={
-                "latitude": LAT, "longitude": LON,
-                "hourly": ("temperature_2m,relative_humidity_2m,windspeed_10m,"
-                           "surface_pressure,shortwave_radiation,precipitation"),
-                # FIX Bug 3: fetch daily Tmax/Tmin for correct Rnl calculation
-                "daily": "temperature_2m_max,temperature_2m_min",
-                "start_date": DATE_TARGET, "end_date": DATE_TARGET,
-                "timezone": "auto"
-            },
-            timeout=30
-        )
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                api_url,
+                params={
+                    "latitude": LAT, "longitude": LON,
+                    "hourly": ("temperature_2m,relative_humidity_2m,windspeed_10m,"
+                               "surface_pressure,shortwave_radiation,precipitation"),
+                    # FIX Bug 3: fetch daily Tmax/Tmin for correct Rnl calculation
+                    "daily": "temperature_2m_max,temperature_2m_min",
+                    "start_date": DATE_TARGET, "end_date": DATE_TARGET,
+                    "timezone": "auto"
+                },
+                timeout=30
+            )
         resp_json   = response.json()
         weather     = resp_json["hourly"]
         T           = float(np.mean(weather["temperature_2m"]))
