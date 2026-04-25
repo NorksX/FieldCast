@@ -1,12 +1,10 @@
-from flask import Flask, request, jsonify
-from pull import bbox_from_coordinates
-from flask_cors import CORS
+from quart import Quart, request, jsonify
+from pull import return_data
+from quart_cors import cors
 
+app = Quart(__name__)
+app = cors(app, allow_origin="*")
 
-app = Flask(__name__)
-CORS(app)
-
-# Mapping for crop types to numbers (if needed for your existing function)
 crop_mapping = {
     "Cabbage": [0.7, 1.05, 0.95],
     "Carrot": [0.7, 1.05, 0.95],
@@ -20,10 +18,8 @@ crop_mapping = {
 }
 
 
-# NEW ENDPOINT: Send crop list to frontend
 @app.route('/api/crops', methods=['GET'])
 def get_crops():
-    """Return the list of available crops for the dropdown"""
     crop_list = list(crop_mapping.keys())
     return jsonify({
         'status': 'success',
@@ -32,27 +28,20 @@ def get_crops():
 
 
 @app.route('/api/calculate', methods=['POST'])
-def calculate():
-    data = request.get_json()
+async def calculate():
+    data = await request.get_json()
     coordinates = data.get('coordinates')
-    crop_index = data.get('crop_index')  # Frontend sends index (0, 1, 2, etc.)
+    crop_index = data.get('crop_index')
 
-    # Get crop name from index
+    # Quart natively supports async!
     crop_list = list(crop_mapping.keys())
     crop_string = crop_list[crop_index]
-
-
-    # Get the values for this crop
     crop_values = crop_mapping[crop_string]
 
-    # Rest of your calculation logic...
-    results = return_data(coordinates, crop_values)
+    results = await return_data(coordinates, crop_values)  # If bbox_from_coordinates is async
 
     return jsonify({
         'status': 'success',
-        'crop': crop_string,
-        'crop_index': crop_index,
-        'crop_values': crop_values,
         'results': results
     })
 
