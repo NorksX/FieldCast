@@ -28,11 +28,7 @@ crop_list = list(crop_mapping.keys())
 
 
 @app.route('/api/crops', methods=['GET'])
-<<<<<<< HEAD
-def get_crops():
-=======
 async def get_crops():
->>>>>>> 30be4e357f5c2782cb900a85aa96f7c80e1bcd80
     return jsonify({
         'status': 'success',
         'crops': list(crop_mapping.keys()),
@@ -46,15 +42,8 @@ async def calculate():
     coordinates = data.get('coordinates')
     crop_index  = data.get('crop_index')
 
-<<<<<<< HEAD
-    crop_list   = list(crop_mapping.keys())
-    crop_name   = crop_list[crop_index]
-    crop_values = crop_mapping[crop_name]
-=======
-    # Quart natively supports async!
     crop_string = crop_list[crop_index]
     crop_values = crop_mapping[crop_string]
->>>>>>> 30be4e357f5c2782cb900a85aa96f7c80e1bcd80
 
     results = await asyncio.to_thread(
         return_data,
