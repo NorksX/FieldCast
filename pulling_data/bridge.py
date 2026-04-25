@@ -1,3 +1,4 @@
+import asyncio
 from quart import Quart, request, jsonify
 from pull import return_data
 from quart_cors import cors
@@ -192,25 +193,36 @@ async def get_parcels_by_field(field_id):
 async def get_crops():
     return jsonify({
         'status': 'success',
-        'crops': crop_list
+        'crops': list(crop_mapping.keys()),
     })
 
 
 @app.route('/api/calculate', methods=['POST'])
 async def calculate():
     data = await request.get_json()
-    coordinates = data.get('coordinates')
-    crop_index = data.get('crop_index')
 
-    # Quart natively supports async!
+    coordinates = data.get('coordinates')
+    crop_index  = data.get('crop_index')
+
     crop_string = crop_list[crop_index]
     crop_values = crop_mapping[crop_string]
 
-    results = await return_data(coordinates, crop_values)
+    results = await asyncio.to_thread(
+        return_data,
+        coordinates,
+        crop_values,
+    )
+
+    warnings = results.get('data_quality', {}).get('warnings', [])
+
+    # Print every warning to the Quart console as it happens
+    for w in warnings:
+        app.logger.warning('[irrigation] %s', w)
 
     return jsonify({
-        'status': 'success',
-        'results': results
+        'status':   'success',
+        'warnings': warnings,          # top-level so the frontend sees them immediately
+        'results':  results,           # full payload including data_quality still intact
     })
 
 
