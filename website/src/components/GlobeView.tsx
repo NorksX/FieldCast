@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import Globe from "globe.gl";
-import { Box } from "@chakra-ui/react";
 import CountryDropdown from "./CountryDropdown";
 
 interface Props {
@@ -10,7 +9,7 @@ interface Props {
 function GlobeView({ onSelectCountry }: Props) {
   const globeContainerRef = useRef<HTMLDivElement>(null);
   const globeInstanceRef = useRef<any>(null);
-const onSelectCountryRef = useRef<(lat: number, lng: number) => void>(onSelectCountry);
+  const onSelectCountryRef = useRef<(lat: number, lng: number) => void>(onSelectCountry);
 
   useEffect(() => {
     onSelectCountryRef.current = onSelectCountry;
@@ -52,9 +51,10 @@ const onSelectCountryRef = useRef<(lat: number, lng: number) => void>(onSelectCo
 
   const handleSelectCountry = (lat: number, lng: number) => {
     if (globeInstanceRef.current) {
-      globeInstanceRef.current.pointOfView({ lat, lng, altitude: 0.8 }, 2000);
+      // Zoom in more on country
+      globeInstanceRef.current.pointOfView({ lat, lng, altitude: 0.3 }, 2000);
       setTimeout(() => {
-        onSelectCountry(lat, lng);
+        onSelectCountryRef.current(lat, lng);
       }, 2000);
     }
   };
@@ -62,15 +62,17 @@ const onSelectCountryRef = useRef<(lat: number, lng: number) => void>(onSelectCo
   return (
     <>
       <CountryDropdown onSelectCountry={handleSelectCountry} />
-      <Box
+      <div
         ref={globeContainerRef}
-        width="100vw"
-        height="100vh"
-        overflow="hidden"
-        bg="black"
-        position="fixed"
-        top={0}
-        left={0}
+        style={{
+          width: "100vw",
+          height: "100vh",
+          overflow: "hidden",
+          background: "black",
+          position: "fixed",
+          top: 0,
+          left: 0,
+        }}
       />
     </>
   );
