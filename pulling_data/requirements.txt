@@ -1,0 +1,20 @@
+# Core web framework
+quart
+quart-cors
+
+# Async HTTP client
+httpx
+
+# Scientific computing
+numpy
+pandas
+
+# SentinelHub & geospatial
+sentinelhub
+shapely
+
+# Image processing (for resizing)
+Pillow
+
+# Date/time handling
+python-dateutil
