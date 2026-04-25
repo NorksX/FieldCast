@@ -9,7 +9,6 @@ import uuid
 
 app = Quart(__name__)
 app = cors(app, allow_origin="*")
-idCounter = 1
 
 crop_mapping = {
     "Cabbage": [0.7, 1.05, 0.95],
@@ -72,8 +71,7 @@ async def getIsWatered():
         }), 400
 
     # Генерирање на уникатен fieldID
-    field_id = idCounter
-    idCounter - idCounter + 1
+    field_id = str(uuid.uuid4())
 
     # Генерирање на тековен датум и време
     datum = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
