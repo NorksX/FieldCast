@@ -11,8 +11,6 @@ pyproj
 numpy
 pandas
 
-# ET₀ Calculation (FAO-56)
-pyeto
 
 # HTTP Requests
 requests
